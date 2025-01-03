@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+	<title>Parcel Placement and Warehouse Management</title>
+	<link rel="stylesheet" href="main.css" />
+
+</head>
+
+<body>
+	<div id="sidebar">
+		<h3>Warehouse Dimensions</h3>
+		<label for="width">Width:</label>
+		<input type="number" id="width" value="750" />
+		<br />
+		<label for="length">Length:</label>
+		<input type="number" id="length" value="650" />
+		<br />
+		<label for="height">Height:</label>
+		<input type="number" id="height" value="450" />
+		<br />
+		<label for="weight-limit">Weight Limit:</label>
+		<input type="number" id="weight-limit" value="1000" />
+		<br />
+		<button id="apply">Apply</button>
+		<h4>Boxes</h4>
+		<div id="boxList">
+			<ul id="boxListItems"></ul>
+		</div>
+		<button id="addPackageButton">Add Package</button>
+	</div>
+
+	<div id="contextMenu">
+		<button id="rotateButton">Rotate 90 degrees</button>
+		<button id="editButton">Edit</button>
+		<button id="copyButton">Copy</button>
+		<button id="deleteButton">Delete</button>
+	</div>
+
+	<div id="modal">
+		<div id="modal-content">
+			<span class="close">&times;</span>
+			<h3>Add New Package</h3>
+
+			<div class="modal-row">
+				<label for="modal-name">Name:</label>
+				<input type="text" id="modal-name" placeholder="Enter package name" required />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-color">Color:</label>
+				<input type="text" id="modal-color" placeholder="Enter package color" required />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-width">Width:</label>
+				<input type="number" id="modal-width" placeholder="Enter package width" required />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-length">Length:</label>
+				<input type="number" id="modal-length" placeholder="Enter package length" required />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-height">Height:</label>
+				<input type="number" id="modal-height" placeholder="Enter package height" required />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-weight">Weight:</label>
+				<input type="number" id="modal-weight" placeholder="Enter package weight" required />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-note">Note:</label>
+				<input type="text" id="modal-note" placeholder="Enter package note" />
+			</div>
+
+			<div class="modal-row">
+				<label for="modal-stack">Can stack?</label>
+				<input type="checkbox" id="modal-stack" />
+			</div>
+
+			<div class="modal-row">
+				<button id="savePackageButton">Add Package</button>
+			</div>
+		</div>
+	</div>
+
+
+	<script type="importmap">
+        {
+            "imports": {
+                "three": "./build/three.module.js",
+                "three/addons/": "./jsm/"
+            }
+        }
+    </script>
+
+	<script type="module">
+		import * as THREE from "three";
+		import { OrbitControls } from "./jsm/controls/OrbitControls.js";
+
+		let camera, scene, renderer;
+		let pointer, raycaster, isShiftDown = false;
+		let rollOverMesh;
+		let cubeGeo, cubeMaterial;
+
+		const objects = [];
+		let totalWeight = 0;
+		let selectedPackage = null;
+		let contextMenuVisible = false;
+		let isDragging = false;
+		let cameraControls;
+		let plane;
+		let warehouseGroup;
+
+		let warehouseDimensions = {
+			width: 500,
+			length: 500,
+			height: 350,
+			weightLimit: 1000,
+		};
+
+		const packages = [];
+
+		init();
+		render();
+
+		function init() {
+			camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 1, 10000);
+			camera.position.set(0, 500, 1500);
+			camera.lookAt(0, 0, 0);
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x333333);
+
+			const gridHelper = new THREE.GridHelper(1500, 15);
+			gridHelper.position.y = 0;
+			scene.add(gridHelper);
+
+			const rollOverGeometry = new THREE.BoxGeometry(100, 100, 100);
+			const rollOverMaterial = new THREE.MeshBasicMaterial({
+				color: 0x999999,
+				wireframe: true,
+				transparent: true,
+				opacity: 0.1
+			});
+			rollOverMesh = new THREE.Mesh(rollOverGeometry, rollOverMaterial);
+			scene.add(rollOverMesh);  // Add rollOverMesh to the scene
+
+
+			raycaster = new THREE.Raycaster();
+			pointer = new THREE.Vector2();
+			createWarehouseSurface();
+
+
+			const ambientLight = new THREE.AmbientLight(0x606060, 3);
+			scene.add(ambientLight);
+
+			const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
+			directionalLight.position.set(1, 0.75, 0.5).normalize();
+			scene.add(directionalLight);
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			document.body.appendChild(renderer.domElement);
+
+			cameraControls = new OrbitControls(camera, renderer.domElement);
+			cameraControls.enableDamping = true;
+			cameraControls.dampingFactor = 0.25;
+			cameraControls.autoRotation = true;
+			cameraControls.screenSpacePanning = false;
+
+			document.addEventListener("pointermove", onPointerMove);
+			document.addEventListener("pointerdown", onPointerDown);
+			document.addEventListener("pointerup", onPointerUp);
+			document.addEventListener("keydown", onDocumentKeyDown);
+			document.addEventListener("keyup", onDocumentKeyUp);
+			window.addEventListener("resize", onWindowResize);
+
+			document.addEventListener("contextmenu", onRightClick);
+			document.addEventListener("click", onLeftClick);
+
+			document.getElementById("apply").addEventListener("click", function () {
+				warehouseDimensions.width = parseFloat(document.getElementById("width").value);
+				warehouseDimensions.length = parseFloat(document.getElementById("length").value);
+				warehouseDimensions.height = parseFloat(document.getElementById("height").value);
+				warehouseDimensions.weightLimit = parseFloat(document.getElementById("weight-limit").value);
+				createWarehouseSurface();
+
+			});
+
+			document.getElementById("rotateButton").addEventListener("click", rotateParcel);
+			document.getElementById("editButton").addEventListener("click", editPackage);
+			document.getElementById("copyButton").addEventListener("click", copyParcel);
+			document.getElementById("deleteButton").addEventListener("click", deleteParcel);
+
+
+			document.querySelector(".close").addEventListener("click", closeModal);
+		}
+
+		let isEditing = false;
+
+		document.getElementById("addPackageButton").addEventListener("click", openModal);
+
+		document.getElementById("savePackageButton").addEventListener("click", function () {
+			if (isEditing) {
+				saveEditedPackage();
+			} else {
+				addPackage();
+			}
+		});
+
+		function calculateTotalWeight() {
+			return packages.reduce((total, packageData) => total + packageData.weight, 0);
+		}
+
+		function editPackage(index) {
+
+			if (index !== undefined && index >= 0) {
+
+				const pkg = packages[index - 1];
+				const mesh = objects[index];
+
+				if (!pkg || !mesh) {
+					alert("Package or mesh not found.");
+					return;
+				}
+
+				selectedPackage = mesh;
+
+				document.getElementById("modal-name").value = pkg.name || "";
+				document.getElementById("modal-width").value = pkg.width;
+				document.getElementById("modal-length").value = pkg.length;
+				document.getElementById("modal-height").value = pkg.height;
+				document.getElementById("modal-color").value = pkg.color;
+				document.getElementById("modal-weight").value = pkg.weight;
+				document.getElementById("modal-note").value = pkg.note || "";
+				document.getElementById("modal-stack").checked = pkg.canStack || false;
+
+				document.getElementById("modal").style.display = "flex";
+
+				isEditing = true;
+
+			} else if (selectedPackage) {
+
+				const packageData = selectedPackage.userData.packageData;
+
+				if (!packageData) {
+					alert("Package data is missing.");
+					return;
+				}
+
+				document.getElementById("modal-name").value = packageData.name || "";
+				document.getElementById("modal-width").value = packageData.width;
+				document.getElementById("modal-length").value = packageData.length;
+				document.getElementById("modal-height").value = packageData.height;
+				document.getElementById("modal-color").value = packageData.color;
+				document.getElementById("modal-weight").value = packageData.weight;
+				document.getElementById("modal-note").value = packageData.note || "";
+				document.getElementById("modal-stack").checked = packageData.canStack || false;
+
+				document.getElementById("modal").style.display = "flex";
+
+				isEditing = true;
+			} else {
+				alert("No package selected.");
+			}
+		}
+
+		function saveEditedPackage() {
+			if (!selectedPackage) {
+				alert("No package selected.");
+				return;
+			}
+
+			const packageData = selectedPackage.userData.packageData;
+
+			if (!packageData) {
+				alert("Package data is missing.");
+				return;
+			}
+
+			const updatedName = document.getElementById("modal-name").value;
+			const updatedWidth = parseFloat(document.getElementById("modal-width").value);
+			const updatedLength = parseFloat(document.getElementById("modal-length").value);
+			const updatedHeight = parseFloat(document.getElementById("modal-height").value);
+			const updatedColor = document.getElementById("modal-color").value;
+			const updatedWeight = parseFloat(document.getElementById("modal-weight").value);
+			const updatedNote = document.getElementById("modal-note").value;
+			const updatedCanStack = document.getElementById("modal-stack").checked;
+
+			const totalWeight = calculateTotalWeight() - packageData.weight + updatedWeight;
+
+			if (totalWeight > warehouseDimensions.weightLimit) {
+				alert("The total weight exceeds the warehouse weight limit!");
+				return;
+			}
+
+			packageData.name = updatedName;
+			packageData.width = updatedWidth;
+			packageData.length = updatedLength;
+			packageData.height = updatedHeight;
+			packageData.color = updatedColor;
+			packageData.weight = updatedWeight;
+			packageData.note = updatedNote;
+			packageData.canStack = updatedCanStack;
+
+			selectedPackage.geometry.dispose();  // Dispose previous geometry to avoid memory leaks
+			selectedPackage.material.dispose();  // Dispose previous material to avoid memory leaks
+			selectedPackage.geometry = new THREE.BoxGeometry(updatedWidth, updatedHeight, updatedLength);
+			selectedPackage.material = new THREE.MeshLambertMaterial({ color: new THREE.Color(updatedColor) });
+
+			document.getElementById("modal").style.display = "none";
+
+			updateBoxList();
+
+			render();
+
+			isEditing = false;
+		}
+
+
+		function openModal() {
+			document.getElementById("modal").style.display = "flex";
+			isEditing = false;  // Ensure we're in "add" mode when opening the modal
+		}
+
+		let lastPosition = { x: -warehouseDimensions.width / 2, y: 45, z: -warehouseDimensions.length / 2 };  // Starting point for placing packages
+
+
+		function addPackage() {
+			const name = document.getElementById("modal-name").value;
+			const color = document.getElementById("modal-color").value;
+			const width = parseFloat(document.getElementById("modal-width").value);
+			const length = parseFloat(document.getElementById("modal-length").value);
+			const height = parseFloat(document.getElementById("modal-height").value);
+			const weight = parseFloat(document.getElementById("modal-weight").value);
+			const note = document.getElementById("modal-note").value;
+			const canStack = document.getElementById("modal-stack").checked;
+
+			const totalWeight = calculateTotalWeight() + weight;
+
+			if (totalWeight > warehouseDimensions.weightLimit) {
+				alert("Weight limit exceeded! The package cannot be added.");
+				return;
+			}
+
+			const newPackage = {
+				name,
+				color,
+				width,
+				length,
+				height,
+				weight,
+				note,
+				canStack,
+				type: 'parcel',
+			};
+
+			const packageMesh = new THREE.Mesh(
+				new THREE.BoxGeometry(width, height, length),
+				new THREE.MeshLambertMaterial({ color: new THREE.Color(color) })
+			);
+
+			packageMesh.userData = { type: 'parcel', packageData: newPackage };
+
+
+			const position = {
+				x: lastPosition.x + width,  // Place the new package after the last one along the x-axis
+				y: lastPosition.y,  // Keep the height constant
+				z: lastPosition.z,  // Keep the z-position constant (or change if you want to move it in the z-direction)
+			};
+
+			packageMesh.position.set(position.x, position.y, position.z);
+
+			scene.add(packageMesh);
+			objects.push(packageMesh);
+			packages.push(newPackage);
+
+			lastPosition.x = position.x + width;
+
+			updateBoxList();  // Refresh the list
+			render();
+			closeModal();
+		}
+
+
+		function createWarehouseSurface() {
+			if (warehouseGroup) {
+				scene.remove(warehouseGroup);
+			}
+
+			const blackPlaneGeometry = new THREE.PlaneGeometry(warehouseDimensions.width, warehouseDimensions.length);
+			const blackPlaneMaterial = new THREE.MeshBasicMaterial({ color: 0x1F4529 }); // black color
+			const blackPlane = new THREE.Mesh(blackPlaneGeometry, blackPlaneMaterial);
+			blackPlane.rotation.x = -Math.PI / 2;  // Rotate to make it horizontal
+			blackPlane.position.y = 5;  // Rotate to make it horizontal
+
+			const geometry = new THREE.BoxGeometry(
+				warehouseDimensions.width,
+				warehouseDimensions.height,
+				warehouseDimensions.length
+			);
+			const surfaceMaterial = new THREE.MeshBasicMaterial({
+				color: 0xffffff,
+				transparent: true,
+				opacity: 0,
+			});
+			const wireframeMaterial = new THREE.LineBasicMaterial({
+				color: 0x000000,
+				linewidth: 3
+			});
+
+			plane = new THREE.Mesh(geometry, surfaceMaterial);
+			plane.position.set(0, warehouseDimensions.height, 0);
+
+			const wireframeEdges = new THREE.EdgesGeometry(geometry);
+			const wireframe = new THREE.LineSegments(wireframeEdges, wireframeMaterial);
+
+			wireframe.position.set(0, warehouseDimensions.height / 2 + 1, 0); // Adjust the Y position, for example, move it slightly above
+
+			warehouseGroup = new THREE.Group();
+			warehouseGroup.add(blackPlane); // Add black plane beneath the grid
+			warehouseGroup.add(plane);
+			warehouseGroup.add(wireframe);
+
+			scene.add(warehouseGroup);
+			objects.push(plane);  // Add to objects array for raycasting purposes
+		}
+		function closeModal() {
+			document.getElementById("modal").style.display = "none";
+		}
+
+		function onPointerMove(event) {
+			pointer.set(
+				(event.clientX / window.innerWidth) * 2 - 1,
+				-(event.clientY / window.innerHeight) * 2 + 1
+			);
+			raycaster.setFromCamera(pointer, camera);
+
+			const intersects = raycaster.intersectObjects(objects, false);
+
+			if (intersects.length > 0) {
+				const intersect = intersects[0];
+
+				rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
+
+				rollOverMesh.position.y = Math.max(rollOverMesh.position.y, 45);
+			}
+
+			if (isDragging && selectedPackage) {
+				if (selectedPackage.userData.type === 'parcel') {
+					const newY = Math.max(rollOverMesh.position.y, 45);
+
+					const newX = Math.max(Math.min(rollOverMesh.position.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
+					const newZ = Math.max(Math.min(rollOverMesh.position.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
+
+					selectedPackage.position.lerp(new THREE.Vector3(newX, newY, newZ), 0.4); // Smooth motion
+				}
+			}
+
+			render();
+		}
+
+		function onPointerUp(event) {
+			if (isDragging) {
+				isDragging = false;
+				cameraControls.enabled = true; // Re-enable camera controls after dragging
+			}
+		}
+
+
+		function onRightClick(event) {
+			event.preventDefault();
+			const menu = document.getElementById("contextMenu");
+			const { clientX: mouseX, clientY: mouseY } = event;
+
+			if (!selectedPackage.userData.type === 'parcel') return;
+
+			contextMenuVisible = true;
+			menu.style.display = "block";
+			menu.style.left = `${mouseX}px`;
+			menu.style.top = `${mouseY}px`;
+		}
+
+		function onPointerDown(event) {
+			if (contextMenuVisible) return; // Skip if context menu is visible
+
+			pointer.set(
+				(event.clientX / window.innerWidth) * 2 - 1,
+				-(event.clientY / window.innerHeight) * 2 + 1
+			);
+			raycaster.setFromCamera(pointer, camera);
+
+			const intersects = raycaster.intersectObjects(objects, false);
+
+			if (intersects.length > 0) {
+				const intersect = intersects[0];
+				if (intersect.object !== rollOverMesh && intersect.object && intersect.object.userData.type === 'parcel') {
+					selectedPackage = intersect.object;
+					isDragging = true;
+					cameraControls.enabled = false;  // Disable camera controls while dragging
+
+					if (rollOverMesh) {
+						rollOverMesh.visible = true;
+					}
+
+					const packagePosition = selectedPackage.position;
+
+					const newX = Math.max(Math.min(packagePosition.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
+
+					const newZ = Math.max(Math.min(packagePosition.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
+
+					const newY = Math.max(packagePosition.y, 45);  // Prevent going below surface
+
+					selectedPackage.position.set(newX, newY, newZ);
+				} else {
+					console.log('Clicked object is not a parcel:', intersect.object);
+				}
+			}
+		}
+
+		function onLeftClick(event) {
+			const menu = document.getElementById("contextMenu");
+			menu.style.display = "none";
+			contextMenuVisible = false;
+
+			if (isDragging) {
+				isDragging = false;  // Stop dragging
+				cameraControls.enabled = true;  // Re-enable camera controls after dragging
+			}
+
+			render(); // Re-render the scene
+		}
+
+
+		function onDocumentKeyDown(event) {
+			if (event.key === "Shift") {
+				isShiftDown = true;
+			}
+		}
+
+		function onDocumentKeyUp(event) {
+			if (event.key === "Shift") {
+				isShiftDown = false;
+			}
+		}
+
+		function rotateParcel() {
+			if (selectedPackage) {
+				selectedPackage.rotation.x += Math.PI / 2;
+				render();
+			}
+		}
+
+		function copyParcel() {
+			if (selectedPackage && selectedPackage.userData.type === 'parcel') {
+				copyParcelByPackage(selectedPackage);
+				updateBoxList();
+			}
+		}
+
+		function deleteParcel() {
+			if (selectedPackage.userData.type === 'parcel') {
+				const index = objects.indexOf(selectedPackage);
+				if (index !== -1) {
+					deleteParcelByIndex(index);
+					updateBoxList();
+				}
+			}
+		}
+
+		function updateBoxList() {
+			const boxList = document.getElementById("boxListItems");
+			boxList.innerHTML = "";  // Clear the current list
+
+			objects.forEach((obj, index) => {
+				if (obj.userData && obj.userData.packageData) {
+					const packageData = obj.userData.packageData;
+
+					const li = document.createElement("li");
+
+					li.innerHTML = `
+                <div class="package-header">
+                    <strong>${packageData.name}</strong>
+                    <div class="action-icons">
+                        <button class="edit-btn" data-index="${index}">Edit</button>
+                        <button class="copy-btn" data-index="${index}">Copy</button>
+                        <button class="delete-btn" data-index="${index}">Delete</button>
+                    </div>
+                </div>
+                <div class="package-details">
+                    <div class="detail-row">
+                        <p><strong>Width:</strong> ${packageData.width}</p>
+                        <p><strong>Height:</strong> ${packageData.height}</p>
+                    </div>
+                    <div class="detail-row">
+                        <p><strong>Length:</strong> ${packageData.length}</p>
+                        <p><strong>Weight:</strong> ${packageData.weight}kg</p>
+                    </div>
+                    <div class="detail-row">
+                        <p><strong>Note:</strong> ${packageData.note}</p>
+                        <p><strong>Can Stack:</strong> ${packageData.canStack ? 'Yes' : 'No'}</p>
+                    </div>
+                </div>
+            `;
+
+					boxList.appendChild(li);
+				}
+			});
+
+			document.querySelectorAll("#boxListItems .edit-btn").forEach(button => {
+				button.addEventListener("click", (event) => {
+					const index = event.target.dataset.index;
+					editPackage(index);  // Pass the selected package to edit function
+				});
+			});
+
+			document.querySelectorAll("#boxListItems .copy-btn").forEach(button => {
+				button.addEventListener("click", (event) => {
+					const index = event.target.dataset.index;
+					const selectedPackage = objects[index];
+					copyParcelByPackage(selectedPackage);  // Pass the selected package to copy function
+				});
+			});
+
+			document.querySelectorAll("#boxListItems .delete-btn").forEach(button => {
+				button.addEventListener("click", (event) => {
+					const index = event.target.dataset.index;
+					deleteParcelByIndex(index);  // Pass the selected package to delete function
+				});
+			});
+		}
+
+		function copyParcelByPackage(selectedPackage) {
+
+			const packageData = selectedPackage.userData.packageData;
+
+			if (!packageData) {
+				console.error('Package data missing.');
+				return; // Exit if no valid package data
+			}
+
+			const clonePackage = { ...packageData };
+
+			const totalWeight = calculateTotalWeight() + clonePackage.weight;
+
+			if (totalWeight > warehouseDimensions.weightLimit) {
+				alert("The total weight exceeds the warehouse weight limit!");
+				return; // Exit the function if weight limit is exceeded
+			}
+
+			const packageMesh = new THREE.Mesh(
+				new THREE.BoxGeometry(clonePackage.width, clonePackage.height, clonePackage.length),
+				new THREE.MeshLambertMaterial({ color: new THREE.Color(clonePackage.color) })
+			);
+
+			packageMesh.userData = {
+				type: 'parcel',
+				packageData: clonePackage
+			};
+
+			const randomX = Math.floor(Math.random() * warehouseDimensions.width) - warehouseDimensions.width / 2;
+			const randomZ = Math.floor(Math.random() * warehouseDimensions.length) - warehouseDimensions.length / 2;
+			const randomY = 45; // Set a fixed height above the ground (adjust if needed)
+
+			packageMesh.position.set(randomX, randomY, randomZ);
+
+			scene.add(packageMesh);
+			objects.push(packageMesh);
+			packages.push(clonePackage);
+
+			updateBoxList();
+			render();
+		}
+
+		function deleteParcelByIndex(index) {
+			const packageMesh = objects[index];
+
+			const packageWeight = packageMesh.userData.packageData.weight;
+
+			const totalWeight = calculateTotalWeight() - packageWeight;
+
+			scene.remove(packageMesh);
+
+			packageMesh.geometry.dispose();
+			packageMesh.material.dispose();
+
+			objects.splice(index, 1);
+			packages.splice(index, 1);
+
+			updateBoxList();
+			render();
+		}
+
+
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		}
+
+		function render() {
+			cameraControls.update(); // Only required if controls.enableDamping = true, or if controls.auto-rotation is enabled
+			renderer.render(scene, camera);
+		}
+	</script>
+</body>
+
+</html>
