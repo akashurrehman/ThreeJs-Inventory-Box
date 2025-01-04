@@ -124,6 +124,7 @@
 		let cameraControls;
 		let plane;
 		let warehouseGroup;
+		let isColliding = false;
 
 		let warehouseDimensions = {
 			width: 500,
@@ -377,7 +378,6 @@
 
 			packageMesh.userData = { type: 'parcel', packageData: newPackage };
 
-			// Check for stacking restrictions before placing the new package
 			for (const obj of objects) {
 				if (obj !== packageMesh && obj.userData.type === 'parcel' && !obj.userData.packageData.canStack) {
 					const otherPackage = obj;
@@ -393,13 +393,20 @@
 				}
 			}
 
+
 			const position = {
-				x: lastPosition.x + width, // Place the new package after the last one along the x-axis
+				x: lastPosition.x + width + 5, // Place the new package slightly to the right of the last one
 				y: lastPosition.y, // Keep the height constant
 				z: lastPosition.z, // Keep the z-position constant (or change if you want to move it in the z-direction)
 			};
+			let newX = lastPosition.x + width + 5;
+			let newZ = lastPosition.z;
 
-			packageMesh.position.set(position.x, position.y, position.z);
+			newX = Math.max(Math.min(newX, warehouseDimensions.width / 2 - width / 2), -warehouseDimensions.width / 2 + width / 2);
+
+			newZ = Math.max(Math.min(newZ, warehouseDimensions.length / 2 - length / 2), -warehouseDimensions.length / 2 + length / 2);
+
+			packageMesh.position.set(newX, position.y, newZ);
 
 			scene.add(packageMesh);
 			objects.push(packageMesh);
@@ -407,17 +414,31 @@
 
 			lastPosition.x = position.x + width;
 
-			updateBoxList(); // Refresh the list
+			updateBoxList();
 			render();
 			closeModal();
 		}
 
-		function checkCollision(package1, package2) {
+		function checkCollision(package1, package2, overlapTolerance = 10) {
 			const box1 = new THREE.Box3().setFromObject(package1);
 			const box2 = new THREE.Box3().setFromObject(package2);
-			console.log('box1.intersectsBox(box2):', box1.intersectsBox(box2));
-			return box1.intersectsBox(box2); // Returns true if the boxes intersect (collision)
+
+			if (box1.intersectsBox(box2)) {
+				const overlapX = Math.min(box1.max.x - box2.min.x, box2.max.x - box1.min.x);
+				const overlapY = Math.min(box1.max.y - box2.min.y, box2.max.y - box1.min.y);
+				const overlapZ = Math.min(box1.max.z - box2.min.z, box2.max.z - box1.min.z);
+
+				const totalOverlap = overlapX + overlapY + overlapZ;
+
+				if (totalOverlap <= overlapTolerance) {
+					return false;
+				}
+				return true;
+			}
+
+			return false;
 		}
+
 
 		function checkTopCollision(selectedPackage, otherPackage, horizontalTolerance = -12.5) {
 			// Get the bounding boxes of both the selected and other package
@@ -441,6 +462,7 @@
 
 			// If the selected package is near the top of the other package and overlaps in the horizontal plane (with tolerance)
 			if (isNearTop && isHorizontallyOverlapping) {
+				console.log('checkTopCollision:', isNearTop && isHorizontallyOverlapping)
 				return true; // Collision occurs at the top
 			}
 
@@ -501,8 +523,8 @@
 			raycaster.setFromCamera(pointer, camera);
 
 			const intersects = raycaster.intersectObjects(objects, false);
+			let newY = 45;
 
-			// Reset edge highlight of the previous dragged package
 			if (selectedPackage) {
 				if (selectedPackage.userData.type === 'parcel' && selectedPackageEdges) {
 					selectedPackageEdges.visible = false; // Hide previous edges
@@ -511,13 +533,14 @@
 
 			if (intersects.length > 0) {
 				const intersect = intersects[0];
+				const mousePositionInWorldY = intersect.point.y;  // Extract Y from the ray intersection
 
 				rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
-				rollOverMesh.position.y = Math.max(rollOverMesh.position.y, 45);
+				rollOverMesh.position.divideScalar(50).floor().multiplyScalar(50).addScalar(25);
 
 				if (selectedPackage) {
+
 					const currentPosition = rollOverMesh.position;
-					let isColliding = false;
 					let canStack = true;
 
 					for (const obj of objects) {
@@ -525,12 +548,15 @@
 							const otherPackage = obj;
 
 							if (checkCollision(selectedPackage, otherPackage)) {
+								const otherPackageTop = otherPackage.position.y + otherPackage.geometry.parameters.height;
+								if (otherPackage.userData.packageData.canStack) {
+									newY = Math.max(newY, otherPackageTop + 10);
+								}
 								isColliding = true;
-								//break;
+							} else {
+								newY = 45;
 							}
-
 							if (obj.userData && !obj.userData.packageData.canStack) {
-
 								if (checkTopCollision(selectedPackage, otherPackage)) {
 									canStack = false;
 
@@ -538,8 +564,7 @@
 									notification.style.display = 'block';
 									setTimeout(() => {
 										notification.style.display = 'none';
-									}, 3000);
-
+									}, 300);
 									return;
 								}
 							}
@@ -547,20 +572,18 @@
 						}
 					}
 
-					// Highlight edges if collision occurs
 					if (isColliding) {
 						const geometry = new THREE.EdgesGeometry(selectedPackage.geometry);
 						const material = new THREE.LineBasicMaterial({ color: 0x7EC8E3, linewidth: 3 });
 						selectedPackageEdges = new THREE.LineSegments(geometry, material);
-						selectedPackage.add(selectedPackageEdges); // Add edges to the package
-						selectedPackageEdges.visible = true; // Show highlighted edges
+						selectedPackage.add(selectedPackageEdges);
+						selectedPackageEdges.visible = true;
 					} else {
-						selectedPackageEdges = null; // Reset edges if no collision
+						selectedPackageEdges = null;
 					}
 
-					// If the package can't stack, prevent placement
 					if (!canStack) {
-						return; // Exit early to prevent dropping on a non-stackable package
+						return;
 					}
 				}
 			}
@@ -568,12 +591,10 @@
 			// Drag the selected package
 			if (isDragging && selectedPackage) {
 				if (selectedPackage.userData.type === 'parcel') {
-					const newY = Math.max(rollOverMesh.position.y, 45);
-
 					const newX = Math.max(Math.min(rollOverMesh.position.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
 					const newZ = Math.max(Math.min(rollOverMesh.position.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
 
-					selectedPackage.position.lerp(new THREE.Vector3(newX, newY, newZ), 0.4); // Smooth motion
+					selectedPackage.position.lerp(new THREE.Vector3(newX, newY, newZ), 0.4);
 				}
 			}
 
@@ -583,7 +604,7 @@
 		function onPointerUp(event) {
 			if (isDragging) {
 				isDragging = false;
-				cameraControls.enabled = true; // Re-enable camera controls after dragging
+				cameraControls.enabled = true;
 			}
 		}
 
@@ -600,14 +621,11 @@
 			menu.style.left = `${mouseX}px`;
 			menu.style.top = `${mouseY}px`;
 		}
-
 		function onPointerDown(event) {
 			if (contextMenuVisible) return; // Skip if context menu is visible
 
-			pointer.set(
-				(event.clientX / window.innerWidth) * 2 - 1,
-				-(event.clientY / window.innerHeight) * 2 + 1
-			);
+			pointer.set( ( event.clientX / window.innerWidth ) * 2 - 1, - ( event.clientY / window.innerHeight ) * 2 + 1 );
+
 			raycaster.setFromCamera(pointer, camera);
 
 			const intersects = raycaster.intersectObjects(objects, false);
@@ -629,7 +647,7 @@
 
 					const newZ = Math.max(Math.min(packagePosition.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
 
-					const newY = Math.max(packagePosition.y, 45);  // Prevent going below surface
+					const newY = Math.max(packagePosition.y);  // Prevent going below surface
 
 					selectedPackage.position.set(newX, newY, newZ);
 				}
