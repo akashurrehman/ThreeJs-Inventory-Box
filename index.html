@@ -659,7 +659,6 @@
 				-(event.clientY / window.innerHeight) * 2 + 1
 			);
 			raycaster.setFromCamera(pointer, camera);
-
 			const intersects = raycaster.intersectObjects(objects, false);
 
 			if (stickToCursor && selectedPackage) {
