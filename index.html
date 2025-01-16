@@ -85,7 +85,7 @@
 			</div>
 
 			<div class="modal-row">
-				<button id="savePackageButton">Add Package</button>
+				<button id="savePackageButton">Submit Package</button>
 			</div>
 		</div>
 	</div>
@@ -95,7 +95,35 @@
 		This package cannot be placed on top of a non-stackable package.
 	</div>
 
+	<div id="weightNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		This package cannot be placed on top of a lighter package.
+	</div>
 
+	<div id="manyCollisionsNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		Many collisions to handle.
+	</div>
+
+	<div id="scaleNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		This package cannot be placed on top of a smaller package.
+	</div>
+
+	<div id="stackedNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		Can not move understacked package.
+	</div>
+
+	<div id="editNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		Can edit while moving a package.
+	</div>
+
+	<div id="warningMessage"
+		style="display:none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); padding: 10px; background-color: yellow; color: red; font-size: 16px; border-radius: 5px;">
+		Warning: The package is outside the warehouse!
+	</div>
 
 	<script type="importmap">
         {
@@ -111,20 +139,40 @@
 		import { OrbitControls } from "./jsm/controls/OrbitControls.js";
 
 		let camera, scene, renderer;
-		let pointer, raycaster, isShiftDown = false;
+		let raycaster, isShiftDown = false;
+		let pointer = new THREE.Vector2();
 		let rollOverMesh;
 		let cubeGeo, cubeMaterial;
+		let cursorOffset = new THREE.Vector3(); 
 
 		const objects = [];
-		let selectedPackageEdges = null; // Declare it globally so it's accessible across functions.
 		let totalWeight = 0;
 		let selectedPackage = null;
+		let edittingPackage = null;
 		let contextMenuVisible = false;
 		let isDragging = false;
 		let cameraControls;
 		let plane;
 		let warehouseGroup;
 		let isColliding = false;
+		let stickToCursor = false; 
+		let collidingObject = null;
+		let rightClickedObject = null;
+
+		let selectedPackageEdges = null; 
+
+		let stackCounter = 0
+		let canStack = true;
+		let canPlace = false
+		let isInsideWarehouseCheck = false
+		let pressStartTime; // To store the timestamp when the pointer is pressed
+		const LONG_PRESS_THRESHOLD = 500; // Threshold in milliseconds for a long press
+
+		const mousePositionInWorld = new THREE.Vector3(); // For storing the result
+
+		const targetY = 0; //I prefer using constants instead of numbers
+
+		let isInEditor = true
 
 		let warehouseDimensions = {
 			width: 500,
@@ -139,7 +187,7 @@
 		render();
 
 		function init() {
-			camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 1, 10000);
+			camera = new THREE.PerspectiveCamera(20, window.innerWidth / window.innerHeight, 1, 10000);
 			camera.position.set(0, 500, 1500);
 			camera.lookAt(0, 0, 0);
 
@@ -155,7 +203,7 @@
 				color: 0x999999,
 				wireframe: true,
 				transparent: true,
-				opacity: 0.1
+				opacity: 0
 			});
 			rollOverMesh = new THREE.Mesh(rollOverGeometry, rollOverMaterial);
 			scene.add(rollOverMesh);  // Add rollOverMesh to the scene
@@ -228,26 +276,27 @@
 			return packages.reduce((total, packageData) => total + packageData.weight, 0);
 		}
 
-		function editPackage(index) {
+		function editPackage(index = null) {
+			isInEditor = false;
+			if (index !== undefined && index !== null && index >= 0) {
 
-			if (index !== undefined && index >= 0) {
-
-				const pkg = packages[index - 1];
+				const pkg = packages[index];
 				const mesh = objects[index];
 
 				if (!pkg || !mesh) {
 					alert("Package or mesh not found.");
+					isInEditor = true;
 					return;
 				}
 
-				selectedPackage = mesh;
+				edittingPackage = mesh;
 
 				document.getElementById("modal-name").value = pkg.name || "";
-				document.getElementById("modal-width").value = pkg.width;
-				document.getElementById("modal-length").value = pkg.length;
-				document.getElementById("modal-height").value = pkg.height;
-				document.getElementById("modal-color").value = pkg.color;
-				document.getElementById("modal-weight").value = pkg.weight;
+				document.getElementById("modal-width").value = pkg.width || 100;
+				document.getElementById("modal-length").value = pkg.length || 100;
+				document.getElementById("modal-height").value = pkg.height || 100;
+				document.getElementById("modal-color").value = pkg.color || white;
+				document.getElementById("modal-weight").value = pkg.weight || 100;
 				document.getElementById("modal-note").value = pkg.note || "";
 				document.getElementById("modal-stack").checked = pkg.canStack || false;
 
@@ -255,12 +304,13 @@
 
 				isEditing = true;
 
-			} else if (selectedPackage) {
+			} else if (edittingPackage) {
 
-				const packageData = selectedPackage.userData.packageData;
+				const packageData = edittingPackage.userData.packageData;
 
 				if (!packageData) {
 					alert("Package data is missing.");
+					isInEditor = true;
 					return;
 				}
 
@@ -276,30 +326,55 @@
 				document.getElementById("modal").style.display = "flex";
 
 				isEditing = true;
-			} else {
+			} else if(rightClickedObject){
+				edittingPackage = rightClickedObject
+				const packageData = edittingPackage.userData.packageData;
+
+				if (!packageData) {
+					alert("Package data is missing.");
+					isInEditor = true;
+					return;
+				}
+
+				document.getElementById("modal-name").value = packageData.name || "";
+				document.getElementById("modal-width").value = packageData.width;
+				document.getElementById("modal-length").value = packageData.length;
+				document.getElementById("modal-height").value = packageData.height;
+				document.getElementById("modal-color").value = packageData.color;
+				document.getElementById("modal-weight").value = packageData.weight;
+				document.getElementById("modal-note").value = packageData.note || "";
+				document.getElementById("modal-stack").checked = packageData.canStack || false;
+
+				document.getElementById("modal").style.display = "flex";
+
+				isEditing = true;
+			}else{
+				isInEditor = true;
 				alert("No package selected.");
 			}
 		}
 
 		function saveEditedPackage() {
-			if (!selectedPackage) {
+			if (!edittingPackage) {
 				alert("No package selected.");
+				clearEditPackageData();
 				return;
 			}
 
-			const packageData = selectedPackage.userData.packageData;
+			const packageData = edittingPackage.userData.packageData;
 
 			if (!packageData) {
 				alert("Package data is missing.");
+				clearEditPackageData();
 				return;
 			}
 
 			const updatedName = document.getElementById("modal-name").value;
-			const updatedWidth = parseFloat(document.getElementById("modal-width").value);
-			const updatedLength = parseFloat(document.getElementById("modal-length").value);
-			const updatedHeight = parseFloat(document.getElementById("modal-height").value);
-			const updatedColor = document.getElementById("modal-color").value;
-			const updatedWeight = parseFloat(document.getElementById("modal-weight").value);
+			const updatedWidth = parseFloat(document.getElementById("modal-width").value || 100);
+			const updatedLength = parseFloat(document.getElementById("modal-length").value || 100);
+			const updatedHeight = parseFloat(document.getElementById("modal-height").value || 100);
+			const updatedColor = document.getElementById("modal-color").value || "white";
+			const updatedWeight = parseFloat(document.getElementById("modal-weight").value || 100);
 			const updatedNote = document.getElementById("modal-note").value;
 			const updatedCanStack = document.getElementById("modal-stack").checked;
 
@@ -319,38 +394,55 @@
 			packageData.note = updatedNote;
 			packageData.canStack = updatedCanStack;
 
-			selectedPackage.geometry.dispose();  // Dispose previous geometry to avoid memory leaks
-			selectedPackage.material.dispose();  // Dispose previous material to avoid memory leaks
-			selectedPackage.geometry = new THREE.BoxGeometry(updatedWidth, updatedHeight, updatedLength);
-			selectedPackage.material = new THREE.MeshLambertMaterial({ color: new THREE.Color(updatedColor) });
-
+			edittingPackage.geometry.dispose();
+			edittingPackage.material.dispose();
+			edittingPackage.geometry = new THREE.BoxGeometry(updatedWidth, updatedHeight, updatedLength);
+			edittingPackage.material = new THREE.MeshLambertMaterial({ color: new THREE.Color(updatedColor) });
+			if(packageData.isRotated){
+				edittingPackage.position.y = packageData.width/2
+			}else{
+				edittingPackage.position.y = packageData.height/2
+			}
 			document.getElementById("modal").style.display = "none";
 
 			updateBoxList();
 
 			render();
 
-			isEditing = false;
+			clearEditPackageData();
 		}
 
+		function clearEditPackageData(){
+			rightClickedObject = null;
+			edittingPackage = null;
+			isEditing = false;
+			isInEditor = true;
+			rightClickedObject = null;
+		}
 
 		function openModal() {
 			document.getElementById("modal").style.display = "flex";
-			isEditing = false;  // Ensure we're in "add" mode when opening the modal
+			isEditing = false;
+			isInEditor = false;
 		}
 
-		let lastPosition = { x: -warehouseDimensions.width / 2, y: 45, z: -warehouseDimensions.length / 2 };  // Starting point for placing packages
+		let margin = 5;
+
+		let lastPosition = { x: -warehouseDimensions.width / 2 - margin, y: 45, z: -warehouseDimensions.length / 2 - margin };  // Starting point for placing packages
 
 
 		function addPackage() {
-			const name = document.getElementById("modal-name").value;
-			const color = document.getElementById("modal-color").value;
-			const width = parseFloat(document.getElementById("modal-width").value);
-			const length = parseFloat(document.getElementById("modal-length").value);
-			const height = parseFloat(document.getElementById("modal-height").value);
-			const weight = parseFloat(document.getElementById("modal-weight").value);
+			const name = document.getElementById("modal-name").value || "";
+			const color = document.getElementById("modal-color").value || "red";
+			const width = parseFloat(document.getElementById("modal-width").value || 100);
+			const length = parseFloat(document.getElementById("modal-length").value || 100);
+			const height = parseFloat(document.getElementById("modal-height").value || 100);
+			const weight = parseFloat(document.getElementById("modal-weight").value || 100);
 			const note = document.getElementById("modal-note").value;
 			const canStack = document.getElementById("modal-stack").checked;
+			const onTopPackage = null;
+			const onUnderPackage = null;
+			const isRotated = false;
 
 			const totalWeight = calculateTotalWeight() + weight;
 
@@ -368,6 +460,9 @@
 				weight,
 				note,
 				canStack,
+				onTopPackage,
+				onUnderPackage,
+				isRotated,
 				type: 'parcel',
 			};
 
@@ -381,12 +476,12 @@
 			for (const obj of objects) {
 				if (obj !== packageMesh && obj.userData.type === 'parcel' && !obj.userData.packageData.canStack) {
 					const otherPackage = obj;
-					if (checkCollision(packageMesh, otherPackage)) {
-						// Show the notification
+					if (checkCollision(packageMesh, otherPackage).originalCollision) {
 						const notification = document.getElementById('notification');
-						notification.style.display = 'block';  // Show notification
+						notification.style.display = 'block';  
 						setTimeout(() => {
 							notification.style.display = 'none';  // Hide after 3 seconds
+							isInEditor = true
 						}, 3000);
 						return;
 					}
@@ -396,7 +491,7 @@
 
 			const position = {
 				x: lastPosition.x + width + 5, // Place the new package slightly to the right of the last one
-				y: lastPosition.y, // Keep the height constant
+				y: height/2, // Keep the height constant
 				z: lastPosition.z, // Keep the z-position constant (or change if you want to move it in the z-direction)
 			};
 			let newX = lastPosition.x + width + 5;
@@ -419,54 +514,53 @@
 			closeModal();
 		}
 
-		function checkCollision(package1, package2, overlapTolerance = 10) {
+		function checkCollision(package1, package2, collisionMargin = -20) {
+			// Create bounding boxes for both packages
 			const box1 = new THREE.Box3().setFromObject(package1);
 			const box2 = new THREE.Box3().setFromObject(package2);
 
-			if (box1.intersectsBox(box2)) {
-				const overlapX = Math.min(box1.max.x - box2.min.x, box2.max.x - box1.min.x);
-				const overlapY = Math.min(box1.max.y - box2.min.y, box2.max.y - box1.min.y);
-				const overlapZ = Math.min(box1.max.z - box2.min.z, box2.max.z - box1.min.z);
+			// Apply the margin by adjusting the min and max coordinates
+			const box1WithMargin = new THREE.Box3(
+				box1.min.clone().addScalar(-collisionMargin),
+				box1.max.clone().addScalar(collisionMargin)
+			);
 
-				const totalOverlap = overlapX + overlapY + overlapZ;
+			const box2WithMargin = new THREE.Box3(
+				box2.min.clone().addScalar(-collisionMargin),
+				box2.max.clone().addScalar(collisionMargin)
+			);
 
-				if (totalOverlap <= overlapTolerance) {
-					return false;
-				}
-				return true;
-			}
+			// Perform intersection checks
+			const originalCollision = box1.intersectsBox(box2);
+			const marginCollision = box1WithMargin.intersectsBox(box2WithMargin);
 
-			return false;
+			// Return both results
+			return {
+				originalCollision,
+				marginCollision,
+			};
 		}
 
-
 		function checkTopCollision(selectedPackage, otherPackage, horizontalTolerance = -12.5) {
-			// Get the bounding boxes of both the selected and other package
 			const selectedBox = new THREE.Box3().setFromObject(selectedPackage);
 			const otherBox = new THREE.Box3().setFromObject(otherPackage);
 
-			// Get the top and bottom positions of both boxes (max.y and min.y values)
 			const selectedTop = selectedBox.max.y;
 			const selectedBottom = selectedBox.min.y;
 			const otherTop = otherBox.max.y;
 			const otherBottom = otherBox.min.y;
 
-			// Check if the selected package is near the top of the other package
-			// Ensure it's not overlapping other parts, only the top of the beneath package
 			const isNearTop = selectedTop > otherBottom && selectedBottom <= otherTop;
 
-			// Check horizontal overlap, with an added tolerance for the x-axis
 			const isHorizontallyOverlapping = selectedBox.min.x < otherBox.max.x + horizontalTolerance &&
 				selectedBox.max.x > otherBox.min.x - horizontalTolerance &&
 				selectedBox.min.z < otherBox.max.z && selectedBox.max.z > otherBox.min.z;
 
-			// If the selected package is near the top of the other package and overlaps in the horizontal plane (with tolerance)
 			if (isNearTop && isHorizontallyOverlapping) {
-				console.log('checkTopCollision:', isNearTop && isHorizontallyOverlapping)
-				return true; // Collision occurs at the top
+				return true;
 			}
 
-			return false; // No collision at the top
+			return false;
 		}
 
 		function createWarehouseSurface() {
@@ -475,10 +569,10 @@
 			}
 
 			const blackPlaneGeometry = new THREE.PlaneGeometry(warehouseDimensions.width, warehouseDimensions.length);
-			const blackPlaneMaterial = new THREE.MeshBasicMaterial({ color: 0x1F4529 }); // black color
+			const blackPlaneMaterial = new THREE.MeshBasicMaterial({ color: 0x1F4529 });
 			const blackPlane = new THREE.Mesh(blackPlaneGeometry, blackPlaneMaterial);
-			blackPlane.rotation.x = -Math.PI / 2;  // Rotate to make it horizontal
-			blackPlane.position.y = 5;  // Rotate to make it horizontal
+			blackPlane.rotation.x = -Math.PI / 2;
+			blackPlane.position.y = 0;
 
 			const geometry = new THREE.BoxGeometry(
 				warehouseDimensions.width,
@@ -501,7 +595,7 @@
 			const wireframeEdges = new THREE.EdgesGeometry(geometry);
 			const wireframe = new THREE.LineSegments(wireframeEdges, wireframeMaterial);
 
-			wireframe.position.set(0, warehouseDimensions.height / 2 + 1, 0); // Adjust the Y position, for example, move it slightly above
+			wireframe.position.set(0, warehouseDimensions.height / 2 + 5, 0); // Adjust the Y position, for example, move it slightly above
 
 			warehouseGroup = new THREE.Group();
 			warehouseGroup.add(blackPlane); // Add black plane beneath the grid
@@ -509,11 +603,55 @@
 			warehouseGroup.add(wireframe);
 
 			scene.add(warehouseGroup);
-			objects.push(plane);  // Add to objects array for raycasting purposes
+			/**objects.push(plane);  // Add to objects array for raycasting purposes**/
+			/**I think the plane should not be added to the same array of the clickable objects**/
 		}
+
 		function closeModal() {
 			document.getElementById("modal").style.display = "none";
+			clearEditPackageData()
 		}
+
+		let lastValidPosition = new THREE.Vector3();
+
+		function getMousePosition(event) {
+			/**Previous Camera Position Code
+			pointer.set(
+				(event.clientX / window.innerWidth) * 2 - 1,
+				-(event.clientY / window.innerHeight) * 2 + 1
+			);
+			const ray = new THREE.Raycaster();
+			ray.setFromCamera(pointer, camera);
+			const intersects = ray.intersectObjects(objects, false);
+			if (intersects.length > 0) {
+				lastValidPosition.copy(intersects[0].point);
+				return intersects[0].point;
+			}
+			return lastValidPosition;
+			**/
+
+			//Here is a new camera position script that does not rely on intersections
+			
+			// Convert screen coordinates to normalized device coordinates (NDC)
+			pointer.set(
+				(event.clientX / window.innerWidth) * 2 - 1, // X: -1 to 1
+				-(event.clientY / window.innerHeight) * 2 + 1 // Y: -1 to 1
+			);
+
+			// Unproject the NDC into world space
+			mousePositionInWorld.set(pointer.x, pointer.y, 0);
+			mousePositionInWorld.unproject(camera);
+
+			// Calculate direction from camera to mouse
+			const cameraToWorld = mousePositionInWorld.clone().sub(camera.position).normalize();
+
+			// Adjust Y to match the target plane (e.g., ground or a specific Y)
+			const distance = (targetY - camera.position.y) / cameraToWorld.y;
+			mousePositionInWorld.copy(camera.position).add(cameraToWorld.multiplyScalar(distance));
+
+			return mousePositionInWorld;
+		}
+
 
 		function onPointerMove(event) {
 			pointer.set(
@@ -523,133 +661,429 @@
 			raycaster.setFromCamera(pointer, camera);
 
 			const intersects = raycaster.intersectObjects(objects, false);
-			let newY = 45;
 
-			if (selectedPackage) {
-				if (selectedPackage.userData.type === 'parcel' && selectedPackageEdges) {
-					selectedPackageEdges.visible = false; // Hide previous edges
+			if (stickToCursor && selectedPackage) {
+				if(!isInEditor){
+					stickToCursor = false
+					selectedPackage = false
+				}else{
+					const mousePos = getMousePosition(event);
+					if (mousePos) {
+						selectedPackage.position.x = mousePos.x;
+						selectedPackage.position.z = mousePos.z;
+					}
 				}
-			}
+				const isInsideWarehouse = isBoxInsideWarehouse(warehouseDimensions)
 
-			if (intersects.length > 0) {
-				const intersect = intersects[0];
-				const mousePositionInWorldY = intersect.point.y;  // Extract Y from the ray intersection
-
-				rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
-				rollOverMesh.position.divideScalar(50).floor().multiplyScalar(50).addScalar(25);
-
-				if (selectedPackage) {
-
-					const currentPosition = rollOverMesh.position;
-					let canStack = true;
-
-					for (const obj of objects) {
-						if (obj !== selectedPackage && obj.userData.type === 'parcel') {
-							const otherPackage = obj;
-
-							if (checkCollision(selectedPackage, otherPackage)) {
-								const otherPackageTop = otherPackage.position.y + otherPackage.geometry.parameters.height;
-								if (otherPackage.userData.packageData.canStack) {
-									newY = Math.max(newY, otherPackageTop + 10);
-								}
-								isColliding = true;
-							} else {
-								newY = 45;
-							}
-							if (obj.userData && !obj.userData.packageData.canStack) {
-								if (checkTopCollision(selectedPackage, otherPackage)) {
+				if (!isInsideWarehouse) {
+					isInsideWarehouseCheck = false
+					changeEdgeColor(0xFF0000)
+					document.getElementById("warningMessage").style.display = "block";  // Show warning message
+				} else {
+					changeEdgeColor(0x00FF00)
+					isInsideWarehouseCheck = true
+					document.getElementById("warningMessage").style.display = "none";  // Hide warning message
+				}
+				isColliding = true
+				let collisionCount = 0
+				for (const obj of objects) {
+					if (obj !== selectedPackage && obj.userData.type === 'parcel') {
+						const otherPackage = obj;
+						const collisions = checkCollision(selectedPackage, otherPackage)
+						const areColliding = collisions.originalCollision
+						const areMarginColliding = collisions.marginCollision
+						if (areColliding && obj.userData) {
+							collisionCount = collisionCount + 1
+							collidingObject = obj
+							if (!areMarginColliding){
+								if(stackCounter === 0){
+									console.log("outside margin")
+									changeEdgeColor(0x00FF00)
 									canStack = false;
-
-									const notification = document.getElementById('notification');
-									notification.style.display = 'block';
-									setTimeout(() => {
-										notification.style.display = 'none';
-									}, 300);
-									return;
+									canPlace = true;
+									selectedPackage.position.y = getPackageHeight(selectedPackage);
 								}
+							}else{
+								console.log("inside margin")
+								stackCounter = stackCounter + 1
+								const otherPackageTop = otherPackage.position.y + getPackageHeight(otherPackage);
+								selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage);
 							}
-
 						}
 					}
-
-					if (isColliding) {
-						const geometry = new THREE.EdgesGeometry(selectedPackage.geometry);
-						const material = new THREE.LineBasicMaterial({ color: 0x7EC8E3, linewidth: 3 });
-						selectedPackageEdges = new THREE.LineSegments(geometry, material);
-						selectedPackage.add(selectedPackageEdges);
-						selectedPackageEdges.visible = true;
-					} else {
-						selectedPackageEdges = null;
-					}
-
-					if (!canStack) {
-						return;
-					}
 				}
-			}
-
-			// Drag the selected package
-			if (isDragging && selectedPackage) {
-				if (selectedPackage.userData.type === 'parcel') {
-					const newX = Math.max(Math.min(rollOverMesh.position.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
-					const newZ = Math.max(Math.min(rollOverMesh.position.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
-
-					selectedPackage.position.lerp(new THREE.Vector3(newX, newY, newZ), 0.4);
+				console.log("stack count is ",stackCounter)
+				if (collisionCount == 0 ){
+					stackCounter = 0
+					console.log("collision count is 0")
+					isColliding = false
+					canPlace = true;
+					if (selectedPackage){
+						selectedPackage.position.y = getPackageHeight(selectedPackage)
+					}
+				}else if(collisionCount>1){
+					canPlace = false;
+					changeEdgeColor(0xFF0000);
+					const notification = document.getElementById('manyCollisionsNotification');
+					notification.style.display = 'block';
+					setTimeout(() => {
+						notification.style.display = 'none';
+					}, 1000);
+					console.log("can not stack")
+				}else{
+					if(stackCounter !=0 && collidingObject){
+						if (collidingObject.userData.packageData.canStack) {
+							changeEdgeColor(0x00FF00)
+							canStack = true;
+							canPlace = true;
+							console.log("can stack")
+						}else {
+							changeEdgeColor(0xFF0000);
+							canStack = false;
+							canPlace = false;
+							const notification = document.getElementById('notification');
+							notification.style.display = 'block';
+							setTimeout(() => {
+								notification.style.display = 'none';
+							}, 1000);
+							console.log("can not stack")
+						}
+					}
 				}
 			}
 
 			render();
 		}
 
+		function getPackageHeight(mPackage){
+			if(mPackage !=null){
+				if (mPackage.userData.packageData.isRotated){
+					return mPackage.geometry.parameters.width/2
+				}else{
+					return mPackage.geometry.parameters.height/2
+				}
+			}else{
+				return targetY;
+			}
+		}
+
+		function getPackageWidth(mPackage){
+			if(mPackage !=null){
+				if (mPackage.userData.packageData.isRotated){
+					return mPackage.geometry.parameters.height
+				}else{
+					return mPackage.geometry.parameters.width
+				}
+			}else{
+				return targetY;
+			}
+		}
+
+		function isBoxInsideWarehouse(warehouseDimensions) {
+			// Get the dimensions of the box (package)
+			const boxHalfWidth = selectedPackage.geometry.parameters.width / 2;
+			const boxHalfLength = selectedPackage.geometry.parameters.depth / 2; // For length (z-axis)
+
+			// Calculate the outer edges of the box
+			const minX = selectedPackage.position.x - boxHalfWidth;
+			const maxX = selectedPackage.position.x + boxHalfWidth;
+			const minZ = selectedPackage.position.z - boxHalfLength;
+			const maxZ = selectedPackage.position.z + boxHalfLength;
+
+			// Warehouse boundaries with margin
+			const warehouseMinX = -warehouseDimensions.width / 2;
+			const warehouseMaxX = warehouseDimensions.width / 2;
+			const warehouseMinZ = -warehouseDimensions.length / 2;
+			const warehouseMaxZ = warehouseDimensions.length / 2;
+
+			// Check if the box is entirely inside the warehouse
+			const isInside =
+				minX >= warehouseMinX &&
+				maxX <= warehouseMaxX &&
+				minZ >= warehouseMinZ &&
+				maxZ <= warehouseMaxZ;
+
+			return isInside;
+		}
+
+		function onPointerDown(event){
+			if (event.button === 0) {
+				console.log("Left click pressed.");
+				if (contextMenuVisible) return;
+				pressStartTime = Date.now();
+			}
+		}
+
 		function onPointerUp(event) {
-			if (isDragging) {
-				isDragging = false;
-				cameraControls.enabled = true;
+			if (event.button === 0) {
+				console.log("Left click released.");
+				if(!isInEditor){
+					stickToCursor = false
+					selectedPackage = false
+					return;
+				}
+				/**MOVED FROM POINTER DOWN START**/
+
+				/**WE NEED TO MAKE SURE THAT CAMERA MOVEMENT AND 
+				 * DRAGGING AN OBJECT DO NOT HAPPEN IN THE SAME TIME
+				 * THE BEST WAY IS TO TRIGGER BOTH OF THEN IN POINTER UP**/
+
+				const pressDuration = Date.now() - pressStartTime;//This determines of the user clicked on an object
+				if(pressDuration<LONG_PRESS_THRESHOLD){
+					const mousePos = getMousePosition(event);
+
+					if (mousePos) {
+						if (stickToCursor){
+							dropObject()
+						}else{
+							pickObject(mousePos.x,mousePos.z,targetY)
+						}
+					}
+					return
+				}
+				/**MOVED FROM POINTER DOWN END**/
+				if (isDragging) {
+					isDragging = false;
+					cameraControls.enabled = true;
+					document.getElementById("warningMessage").style.display = "none";
+				}
+			}
+		}
+
+		function dropObject(){
+			/** Set off outlines here **/
+			if(isInsideWarehouseCheck && canPlace){
+				if(isColliding && collidingObject){
+					if (canStack) {
+						console.log("dropped object can stack")
+						/** which means the object is being stacked **/
+						if (getPackageWidth(selectedPackage) > getPackageWidth(collidingObject)){
+							const notification = document.getElementById('scaleNotification');
+							notification.style.display = 'block';  
+							setTimeout(() => {
+								notification.style.display = 'none';  // Hide after 2 seconds
+								isInEditor = true
+							}, 2000);
+							return;
+						}
+						if (selectedPackage.userData.length > collidingObject.userData.packageData.length){
+							const notification = document.getElementById('scaleNotification');
+							notification.style.display = 'block';  
+							setTimeout(() => {
+								notification.style.display = 'none';  // Hide after 2 seconds
+								isInEditor = true
+							}, 2000);
+							return;
+						}
+						if (selectedPackage.userData.packageData.weight > collidingObject.userData.packageData.weight){
+							const notification = document.getElementById('weightNotification');
+							notification.style.display = 'block';  
+							setTimeout(() => {
+								notification.style.display = 'none';  // Hide after 2 seconds
+								isInEditor = true
+							}, 2000);
+							return;
+						}
+						stickToCursor = false;
+						hideEdges()
+						stackObjectOnTop()
+						clearSelectedObjectData()
+						return;
+					}else {				
+						console.log("dropped object can not stack")		
+						stickToCursor = false;
+						hideEdges()
+						snapPackageToCollider()
+						clearSelectedObjectData()
+					}
+				}else{
+					if(isColliding){
+						console.log("dropped object but colliding")
+						const notification = document.getElementById('notification');
+						notification.style.display = 'block';  
+						setTimeout(() => {
+							notification.style.display = 'none';  // Hide after 2 seconds
+							isInEditor = true
+						}, 2000);
+						return;
+					}else{
+						console.log("dropped object not colliding")
+						hideEdges()
+						stickToCursor = false
+						clearSelectedObjectData()
+					}
+				}
+			}
+		}
+
+		function stackObjectOnTop(){
+			selectedPackage.userData.packageData.onUnderPackage = collidingObject
+			collidingObject.userData.packageData.onTopPackage = selectedPackage
+			const otherPackageTop = collidingObject.position.y + getPackageHeight(collidingObject);
+			selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage)
+			selectedPackage.position.z = collidingObject.position.z
+			selectedPackage.position.x = collidingObject.position.x
+		}
+
+		function snapPackageToCollider() {
+			if (selectedPackage && collidingObject) {
+				// Get bounding boxes of the selected package and the colliding object
+				const selectedBox = new THREE.Box3().setFromObject(selectedPackage);
+				const collidingBox = new THREE.Box3().setFromObject(collidingObject);
+
+				// Calculate the center of the selected package
+				const selectedCenter = new THREE.Vector3();
+				selectedBox.getCenter(selectedCenter);
+
+				// Calculate the center and size of the colliding object
+				const collidingCenter = new THREE.Vector3();
+				collidingBox.getCenter(collidingCenter);
+
+				const collidingSize = new THREE.Vector3();
+				collidingBox.getSize(collidingSize);
+
+				// Calculate face positions relative to the colliding object
+				const packageHeightCalculated = getPackageHeight(selectedPackage)
+				const faces = {
+					front: new THREE.Vector3(collidingCenter.x, packageHeightCalculated, collidingBox.max.z),
+					back: new THREE.Vector3(collidingCenter.x, packageHeightCalculated, collidingBox.min.z),
+					left: new THREE.Vector3(collidingBox.min.x, packageHeightCalculated, collidingCenter.z),
+					right: new THREE.Vector3(collidingBox.max.x, packageHeightCalculated, collidingCenter.z),
+				};
+
+				// Find the closest face
+				let closestFace = null;
+				let minDistance = Infinity;
+
+				for (const [face, position] of Object.entries(faces)) {
+					const distance = selectedCenter.distanceTo(position);
+					console.log(`Distance to ${face}:`, distance); // Debugging
+					if (distance < minDistance) {
+						minDistance = distance;
+						closestFace = face;
+					}
+				}
+
+				// Calculate the size of the selected package
+				const selectedSize = new THREE.Vector3();
+				selectedBox.getSize(selectedSize);
+
+				// Snap the selected package to the closest face
+				switch (closestFace) {
+					case 'front':
+						selectedPackage.position.set(
+							collidingCenter.x,
+							packageHeightCalculated,
+							collidingBox.max.z + selectedSize.z / 2
+						);
+						break;
+					case 'back':
+						selectedPackage.position.set(
+							collidingCenter.x,
+							packageHeightCalculated,
+							collidingBox.min.z - selectedSize.z / 2
+						);
+						break;
+					case 'left':
+						selectedPackage.position.set(
+							collidingBox.min.x - selectedSize.x / 2,
+							packageHeightCalculated,
+							collidingCenter.z
+						);
+						break;
+					case 'right':
+						selectedPackage.position.set(
+							collidingBox.max.x + selectedSize.x / 2,
+							packageHeightCalculated,
+							collidingCenter.z
+						);
+						break;
+				}
+
+				console.log(`Snapped to ${closestFace} face of the collider.`);
+			} else {
+				console.warn("No selected package or colliding object.");
 			}
 		}
 
 
-		function onRightClick(event) {
-			event.preventDefault();
-			const menu = document.getElementById("contextMenu");
-			const { clientX: mouseX, clientY: mouseY } = event;
-
-			if (!selectedPackage.userData.type === 'parcel') return;
-
-			contextMenuVisible = true;
-			menu.style.display = "block";
-			menu.style.left = `${mouseX}px`;
-			menu.style.top = `${mouseY}px`;
+		function clearSelectedObjectData(){
+			isColliding = false;
+			collidingObject = null;
+			selectedPackage = null;
 		}
-		function onPointerDown(event) {
-			if (contextMenuVisible) return; // Skip if context menu is visible
 
-			pointer.set( ( event.clientX / window.innerWidth ) * 2 - 1, - ( event.clientY / window.innerHeight ) * 2 + 1 );
-
-			raycaster.setFromCamera(pointer, camera);
-
-			const intersects = raycaster.intersectObjects(objects, false);
-
-			if (intersects.length > 0) {
-				const intersect = intersects[0];
-				if (intersect.object !== rollOverMesh && intersect.object && intersect.object.userData.type === 'parcel') {
-					selectedPackage = intersect.object;
-					isDragging = true;
-					cameraControls.enabled = false;  // Disable camera controls while dragging
-
-					if (rollOverMesh) {
-						rollOverMesh.visible = true;
+		function pickObject(xPos,zPos,yPos){
+			if (isInEditor){
+				clearSelectedObjectData()
+				const intersects = raycaster.intersectObjects(objects, false);
+				if (intersects.length > 0 && intersects[0].object.userData.type === 'parcel') {
+					selectedPackage = intersects[0].object;
+					if(selectedPackage.userData.packageData.onTopPackage != null){
+						clearSelectedObjectData()
+						stickToCursor = false
+						const notification = document.getElementById('stackedNotification');
+						notification.style.display = 'block';  
+						setTimeout(() => {
+							notification.style.display = 'none';  // Hide after 2 seconds
+							isInEditor = true
+						}, 2000);
+					}else{
+						addEdgesToPackage()
+						const underPackage = selectedPackage.userData.packageData.onUnderPackage
+						if(underPackage != null){
+							underPackage.userData.packageData.onTopPackage = null
+						}
+						/** Set on outlines here **/
+						stickToCursor = true;
+						selectedPackage.position.x = xPos;
+						selectedPackage.position.z = zPos;
+						if (selectedPackage.userData.packageData.isRotated){
+							selectedPackage.position.y = selectedPackage.geometry.parameters.width/2
+						}else{
+							selectedPackage.position.y = selectedPackage.geometry.parameters.height/2
+						}
 					}
+				}
+			}
+		}
 
-					const packagePosition = selectedPackage.position;
+		function addEdgesToPackage() {
+			if(selectedPackage){
+				if (!selectedPackage.geometry) {
+					console.error("The provided object does not have geometry.");
+					return;
+				}
+				// Create edges geometry from the selectedPackage's geometry
+				const edgesGeometry = new THREE.EdgesGeometry(selectedPackage.geometry);
+				// Create a material with white color
+				const edgesMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF });
+				// Create the edges as LineSegments
+				const edges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+				// Add the edges to the scene
+				selectedPackage.add(edges);
+				// Return the edges for further manipulation if needed
+				return edges;
+			}
+		}
 
-					const newX = Math.max(Math.min(packagePosition.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
+		function hideEdges(){
+			if(selectedPackage){
+				for (let i = selectedPackage.children.length - 1; i >= 0; i--) {
+					const child = selectedPackage.children[i];
+					if (child instanceof THREE.LineSegments) {
+						selectedPackage.remove(child);
+					}
+				}
+			}
+		}
 
-					const newZ = Math.max(Math.min(packagePosition.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
-
-					const newY = Math.max(packagePosition.y);  // Prevent going below surface
-
-					selectedPackage.position.set(newX, newY, newZ);
+		function changeEdgeColor(color) {
+			for (const child of selectedPackage.children) {
+				// Check if the child is a LineSegments (edges)
+				if (child instanceof THREE.LineSegments) {
+					// Change the color of the material
+					child.material.color.set(color);
 				}
 			}
 		}
@@ -660,13 +1094,48 @@
 			contextMenuVisible = false;
 
 			if (isDragging) {
-				isDragging = false;  // Stop dragging
-				cameraControls.enabled = true;  // Re-enable camera controls after dragging
+				isDragging = false;
+				cameraControls.enabled = false;
+				document.getElementById("warningMessage").style.display = "none";
 			}
 
-			render(); // Re-render the scene
+			render();
 		}
 
+		function onRightClick(event) {
+			if (!stickToCursor){
+				event.preventDefault();
+				const mousePos = getMousePosition(event);
+				EditObject()
+				const menu = document.getElementById("contextMenu");
+				const { clientX: mouseX, clientY: mouseY } = event;
+
+				if (!rightClickedObject.userData.type === 'parcel') return;
+
+				contextMenuVisible = true;
+				menu.style.display = "block";
+				menu.style.left = `${mouseX}px`;
+				menu.style.top = `${mouseY}px`;
+			}else{
+				const notification = document.getElementById('editNotification');
+				notification.style.display = 'block';  
+				setTimeout(() => {
+					notification.style.display = 'none';  // Hide after 2 seconds
+					isInEditor = true
+				}, 2000);
+			}
+		}
+
+		function EditObject(){
+			if (isInEditor){
+				const intersects = raycaster.intersectObjects(objects, false);
+				if (intersects.length > 0 && intersects[0].object.userData.type === 'parcel') {
+					rightClickedObject = intersects[0].object
+				}
+			}else{
+				rightClickedObject = null
+			}
+		}
 
 		function onDocumentKeyDown(event) {
 			if (event.key === "Shift") {
@@ -681,21 +1150,52 @@
 		}
 
 		function rotateParcel() {
-			if (selectedPackage) {
-				selectedPackage.rotation.x += Math.PI / 2;
+			if(rightClickedObject){
+				if (rightClickedObject.userData.packageData.isRotated){
+					rightClickedObject.userData.packageData.isRotated = false
+					rightClickedObject.position.y = rightClickedObject.geometry.parameters.height/2
+					rightClickedObject.rotation.x = 0;
+				}else{
+					rightClickedObject.userData.packageData.isRotated = true
+					rightClickedObject.position.y = rightClickedObject.geometry.parameters.width/2
+					rightClickedObject.rotation.x = Math.PI / 2;
+				}
+				render();
+			}
+			else if (selectedPackage) {
+				if (selectedPackage.userData.packageData.isRotated){
+					selectedPackage.userData.packageData.isRotated = false
+					selectedPackage.position.y = rightClickedObject.geometry.parameters.height/2
+					selectedPackage.rotation.x = 0;
+				}else{
+					selectedPackage.userData.packageData.isRotated = true
+					selectedPackage.position.y = rightClickedObject.geometry.parameters.width/2
+					selectedPackage.rotation.x = Math.PI / 2;
+				}
 				render();
 			}
 		}
 
 		function copyParcel() {
-			if (selectedPackage && selectedPackage.userData.type === 'parcel') {
+			if(rightClickedObject && rightClickedObject.userData.type === 'parcel'){
+				copyParcelByPackage(rightClickedObject);
+				updateBoxList();
+			}
+			else if (selectedPackage && selectedPackage.userData.type === 'parcel') {
 				copyParcelByPackage(selectedPackage);
 				updateBoxList();
 			}
 		}
 
 		function deleteParcel() {
-			if (selectedPackage.userData.type === 'parcel') {
+			if(rightClickedObject.userData.type === 'parcel'){
+				const index = objects.indexOf(rightClickedObject);
+				if (index !== -1) {
+					deleteParcelByIndex(index);
+					updateBoxList();
+				}
+			}
+			else if (selectedPackage.userData.type === 'parcel') {
 				const index = objects.indexOf(selectedPackage);
 				if (index !== -1) {
 					deleteParcelByIndex(index);
@@ -731,13 +1231,17 @@
                     <div class="detail-row">
                         <p><strong>Length:</strong> ${packageData.length}</p>
                         <p><strong>Weight:</strong> ${packageData.weight}kg</p>
-						<p><strong>Color:</strong> ${packageData.color}kg</p>
+						<p><strong>Color:</strong> ${packageData.color}</p>
 
                     </div>
                     <div class="detail-row">
                         <p><strong>Note:</strong> ${packageData.note}</p>
                         <p><strong>Can Stack:</strong> ${packageData.canStack ? 'Yes' : 'No'}</p>
                     </div>
+					<!-- Placeholder for cursor position that will be replaced -->
+    <div class="cursor-position">
+        <p><strong>Cursor Position:</strong> <span id="cursor-coordinates">X: 0, Y: 0</span></p>
+    </div>
                 </div>
             `;
 
@@ -768,14 +1272,16 @@
 			});
 		}
 
-		function copyParcelByPackage(selectedPackage) {
+		function copyParcelByPackage(mPackage) {
 
-			const packageData = selectedPackage.userData.packageData;
+			const packageData = mPackage.userData.packageData;
 
 			if (!packageData) {
 				console.error('Package data missing.');
 				return; // Exit if no valid package data
 			}
+			packageData.onUnderPackage = null
+			packageData.onTopPackage = null
 
 			const clonePackage = { ...packageData };
 
@@ -798,9 +1304,8 @@
 
 			const randomX = Math.floor(Math.random() * warehouseDimensions.width) - warehouseDimensions.width / 2;
 			const randomZ = Math.floor(Math.random() * warehouseDimensions.length) - warehouseDimensions.length / 2;
-			const randomY = 45; // Set a fixed height above the ground (adjust if needed)
 
-			packageMesh.position.set(randomX, randomY, randomZ);
+			packageMesh.position.set(randomX, getPackageHeight(mPackage), randomZ);
 
 			scene.add(packageMesh);
 			objects.push(packageMesh);
@@ -837,10 +1342,10 @@
 		}
 
 		function render() {
-			cameraControls.update(); // Only required if controls.enableDamping = true, or if controls.auto-rotation is enabled
+			cameraControls.update();
 			renderer.render(scene, camera);
 		}
+
 	</script>
 </body>
-
 </html>

@@ -95,6 +95,12 @@
 		This package cannot be placed on top of a non-stackable package.
 	</div>
 
+	<div id="warningMessage"
+		style="display:none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); padding: 10px; background-color: yellow; color: red; font-size: 16px; border-radius: 5px;">
+		Warning: The package is outside the warehouse!
+	</div>
+
+
 
 
 	<script type="importmap">
@@ -155,7 +161,7 @@
 				color: 0x999999,
 				wireframe: true,
 				transparent: true,
-				opacity: 0.1
+				opacity: 0
 			});
 			rollOverMesh = new THREE.Mesh(rollOverGeometry, rollOverMaterial);
 			scene.add(rollOverMesh);  // Add rollOverMesh to the scene
@@ -243,11 +249,11 @@
 				selectedPackage = mesh;
 
 				document.getElementById("modal-name").value = pkg.name || "";
-				document.getElementById("modal-width").value = pkg.width;
-				document.getElementById("modal-length").value = pkg.length;
-				document.getElementById("modal-height").value = pkg.height;
-				document.getElementById("modal-color").value = pkg.color;
-				document.getElementById("modal-weight").value = pkg.weight;
+				document.getElementById("modal-width").value = pkg.width || 100;
+				document.getElementById("modal-length").value = pkg.length || 100;
+				document.getElementById("modal-height").value = pkg.height ||100;
+				document.getElementById("modal-color").value = pkg.color || white;
+				document.getElementById("modal-weight").value = pkg.weight || 100;
 				document.getElementById("modal-note").value = pkg.note || "";
 				document.getElementById("modal-stack").checked = pkg.canStack || false;
 
@@ -295,11 +301,11 @@
 			}
 
 			const updatedName = document.getElementById("modal-name").value;
-			const updatedWidth = parseFloat(document.getElementById("modal-width").value);
-			const updatedLength = parseFloat(document.getElementById("modal-length").value);
-			const updatedHeight = parseFloat(document.getElementById("modal-height").value);
-			const updatedColor = document.getElementById("modal-color").value;
-			const updatedWeight = parseFloat(document.getElementById("modal-weight").value);
+			const updatedWidth = parseFloat(document.getElementById("modal-width").value || 100 );
+			const updatedLength = parseFloat(document.getElementById("modal-length").value || 100);
+			const updatedHeight = parseFloat(document.getElementById("modal-height").value || 100 );
+			const updatedColor = document.getElementById("modal-color").value || "white";
+			const updatedWeight = parseFloat(document.getElementById("modal-weight").value || 100);
 			const updatedNote = document.getElementById("modal-note").value;
 			const updatedCanStack = document.getElementById("modal-stack").checked;
 
@@ -319,8 +325,8 @@
 			packageData.note = updatedNote;
 			packageData.canStack = updatedCanStack;
 
-			selectedPackage.geometry.dispose();  // Dispose previous geometry to avoid memory leaks
-			selectedPackage.material.dispose();  // Dispose previous material to avoid memory leaks
+			selectedPackage.geometry.dispose();  
+			selectedPackage.material.dispose(); 
 			selectedPackage.geometry = new THREE.BoxGeometry(updatedWidth, updatedHeight, updatedLength);
 			selectedPackage.material = new THREE.MeshLambertMaterial({ color: new THREE.Color(updatedColor) });
 
@@ -336,19 +342,21 @@
 
 		function openModal() {
 			document.getElementById("modal").style.display = "flex";
-			isEditing = false;  // Ensure we're in "add" mode when opening the modal
+			isEditing = false;  
 		}
 
-		let lastPosition = { x: -warehouseDimensions.width / 2, y: 45, z: -warehouseDimensions.length / 2 };  // Starting point for placing packages
+		let margin=5;
+
+		let lastPosition = { x: -warehouseDimensions.width / 2 - margin, y: 45, z: -warehouseDimensions.length / 2 - margin};  // Starting point for placing packages
 
 
 		function addPackage() {
-			const name = document.getElementById("modal-name").value;
-			const color = document.getElementById("modal-color").value;
-			const width = parseFloat(document.getElementById("modal-width").value);
-			const length = parseFloat(document.getElementById("modal-length").value);
-			const height = parseFloat(document.getElementById("modal-height").value);
-			const weight = parseFloat(document.getElementById("modal-weight").value);
+			const name = document.getElementById("modal-name").value || "";
+			const color = document.getElementById("modal-color").value || "red";
+			const width = parseFloat(document.getElementById("modal-width").value || 100);
+			const length = parseFloat(document.getElementById("modal-length").value || 100);
+			const height = parseFloat(document.getElementById("modal-height").value || 100);
+			const weight = parseFloat(document.getElementById("modal-weight").value || 100);
 			const note = document.getElementById("modal-note").value;
 			const canStack = document.getElementById("modal-stack").checked;
 
@@ -514,7 +522,6 @@
 		function closeModal() {
 			document.getElementById("modal").style.display = "none";
 		}
-
 		function onPointerMove(event) {
 			pointer.set(
 				(event.clientX / window.innerWidth) * 2 - 1,
@@ -524,6 +531,7 @@
 
 			const intersects = raycaster.intersectObjects(objects, false);
 			let newY = 45;
+			let isOutOfBounds = false;
 
 			if (selectedPackage) {
 				if (selectedPackage.userData.type === 'parcel' && selectedPackageEdges) {
@@ -556,6 +564,7 @@
 							} else {
 								newY = 45;
 							}
+
 							if (obj.userData && !obj.userData.packageData.canStack) {
 								if (checkTopCollision(selectedPackage, otherPackage)) {
 									canStack = false;
@@ -568,8 +577,36 @@
 									return;
 								}
 							}
-
 						}
+					}
+
+					const newX = rollOverMesh.position.x;
+					const newZ = rollOverMesh.position.z;
+					const margin = 5;
+
+					const isInsideWarehouse = (
+						newX >= -warehouseDimensions.width / 2 - margin &&
+						newX <= warehouseDimensions.width / 2 + margin &&
+						newZ >= -warehouseDimensions.length / 2 - margin &&
+						newZ <= warehouseDimensions.length / 2 + margin
+					);
+
+
+					if (!isInsideWarehouse) {
+						isOutOfBounds = true;
+						if (selectedPackageEdges) {
+							const geometry = new THREE.EdgesGeometry(selectedPackage.geometry);
+							const material = new THREE.LineBasicMaterial({ color: 0x7EC8E3, linewidth: 3 });
+							selectedPackageEdges = new THREE.LineSegments(geometry, material);
+						}
+						document.getElementById("warningMessage").style.display = "block";  // Show warning message
+					} else {
+						if (selectedPackageEdges) {
+							const geometry = new THREE.EdgesGeometry(selectedPackage.geometry);
+							const material = new THREE.LineBasicMaterial({ color: 0x00FF00, linewidth: 3 });
+							selectedPackageEdges = new THREE.LineSegments(geometry, material);
+						}
+						document.getElementById("warningMessage").style.display = "none";  // Hide warning message
 					}
 
 					if (isColliding) {
@@ -590,12 +627,11 @@
 
 			// Drag the selected package
 			if (isDragging && selectedPackage) {
-				if (selectedPackage.userData.type === 'parcel') {
-					const newX = Math.max(Math.min(rollOverMesh.position.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
-					const newZ = Math.max(Math.min(rollOverMesh.position.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
+				const newX = rollOverMesh.position.x;
+				const newZ = rollOverMesh.position.z;
 
-					selectedPackage.position.lerp(new THREE.Vector3(newX, newY, newZ), 0.4);
-				}
+				// Allow the package to move outside the warehouse
+				selectedPackage.position.lerp(new THREE.Vector3(newX, newY, newZ), 0.4);
 			}
 
 			render();
@@ -605,7 +641,62 @@
 			if (isDragging) {
 				isDragging = false;
 				cameraControls.enabled = true;
+
+				// Reset edge color and hide the warning
+				if (selectedPackageEdges) {
+					selectedPackageEdges.material.color.set(0x00FF00);  // Green color for valid position
+					selectedPackageEdges.visible = false;
+					selectedPackageEdges = null;
+				}
+
+				document.getElementById("warningMessage").style.display = "none";  // Hide warning message
 			}
+		}
+
+		function onPointerDown(event) {
+			if (contextMenuVisible) return; // Skip if context menu is visible
+
+			pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
+
+			raycaster.setFromCamera(pointer, camera);
+
+			const intersects = raycaster.intersectObjects(objects, false);
+
+			if (intersects.length > 0) {
+				const intersect = intersects[0];
+				if (intersect.object !== rollOverMesh && intersect.object && intersect.object.userData.type === 'parcel') {
+					selectedPackage = intersect.object;
+					isDragging = true;
+					cameraControls.enabled = false;  // Disable camera controls while dragging
+
+					if (rollOverMesh) {
+						rollOverMesh.visible = true;
+					}
+
+					const packagePosition = selectedPackage.position;
+
+					const newX = Math.max(Math.min(packagePosition.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
+
+					const newZ = Math.max(Math.min(packagePosition.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
+
+					const newY = Math.max(packagePosition.y);  // Prevent going below surface
+
+					selectedPackage.position.set(newX, newY, newZ);
+				}
+			}
+		}
+
+		function onLeftClick(event) {
+			const menu = document.getElementById("contextMenu");
+			menu.style.display = "none";
+			contextMenuVisible = false;
+
+			if (isDragging) {
+				isDragging = false;
+				cameraControls.enabled = true;
+			}
+
+			render();
 		}
 
 
@@ -621,76 +712,6 @@
 			menu.style.left = `${mouseX}px`;
 			menu.style.top = `${mouseY}px`;
 		}
-
-		function onPointerDown(event) {
-			if (contextMenuVisible) return; // Skip if context menu is visible
-
-			pointer.set((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1);
-
-			raycaster.setFromCamera(pointer, camera);
-
-			const intersects = raycaster.intersectObjects(objects, false);
-
-			if (intersects.length > 0) {
-				const intersect = intersects[0];
-
-				if (intersect.object !== rollOverMesh && intersect.object && intersect.object.userData.type === 'parcel') {
-					selectedPackage = intersect.object;
-					isDragging = true;
-					cameraControls.enabled = false;  // Disable camera controls while dragging
-
-					if (rollOverMesh) {
-						rollOverMesh.visible = true;
-					}
-
-					const packagePosition = selectedPackage.position;
-
-					// Calculate new X and Z positions based on package dimensions and warehouse limits
-					const newX = Math.max(Math.min(packagePosition.x, warehouseDimensions.width / 2), -warehouseDimensions.width / 2);
-					const newZ = Math.max(Math.min(packagePosition.z, warehouseDimensions.length / 2), -warehouseDimensions.length / 2);
-
-					let newY = Math.max(packagePosition.y, 45);  
-
-					let isColliding = false;  
-					for (const obj of objects) {
-						if (obj !== selectedPackage && obj.userData.type === 'parcel') {
-							const otherPackage = obj;
-							if (checkCollision(selectedPackage, otherPackage)) {
-								const otherPackageTop = otherPackage.position.y + otherPackage.geometry.parameters.height;
-								if (otherPackage.userData.packageData.canStack) {
-									newY = Math.max(newY, otherPackageTop + 10);  
-								}
-								isColliding = true;  
-							}
-						}
-					}
-
-					selectedPackage.position.set(newX, newY, newZ);
-
-					if (isColliding) {
-						const notification = document.getElementById('notification');
-						notification.style.display = 'block';  
-						setTimeout(() => {
-							notification.style.display = 'none';  
-						}, 1000);
-					}
-				}
-			}
-		}
-
-		function onLeftClick(event) {
-			const menu = document.getElementById("contextMenu");
-			menu.style.display = "none";
-			contextMenuVisible = false;
-
-			if (isDragging) {
-				isDragging = false;  // Stop dragging
-				cameraControls.enabled = true;  // Re-enable camera controls after dragging
-			}
-
-			render(); // Re-render the scene
-		}
-
 
 		function onDocumentKeyDown(event) {
 			if (event.key === "Shift") {
@@ -755,7 +776,7 @@
                     <div class="detail-row">
                         <p><strong>Length:</strong> ${packageData.length}</p>
                         <p><strong>Weight:</strong> ${packageData.weight}kg</p>
-						<p><strong>Color:</strong> ${packageData.color}kg</p>
+						<p><strong>Color:</strong> ${packageData.color}</p>
 
                     </div>
                     <div class="detail-row">
@@ -861,7 +882,7 @@
 		}
 
 		function render() {
-			cameraControls.update(); // Only required if controls.enableDamping = true, or if controls.auto-rotation is enabled
+			cameraControls.update();
 			renderer.render(scene, camera);
 		}
 	</script>
