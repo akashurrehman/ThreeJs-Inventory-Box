@@ -25,6 +25,9 @@
 		<input type="number" id="weight-limit" value="1000" />
 		<br />
 		<button id="apply">Apply</button>
+		<br />
+		<label  id="weightLimitLabel">Weight</label>
+		<br />
 		<h4>Boxes</h4>
 		<div id="boxList">
 			<ul id="boxListItems"></ul>
@@ -89,10 +92,23 @@
 			</div>
 		</div>
 	</div>
-
+	weightLimitNotification
+	<div id="weightLimitNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		Weight Limit Exceeded.
+	</div>
+	<div id="collidingObjectNotification"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		Can Not Edit A Colliding Package.
+	</div>
 	<div id="notification"
 		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
 		This package cannot be placed on top of a non-stackable package.
+	</div>
+
+	<div id="notificationInvalidPlace"
+		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
+		Package can not be placed here.
 	</div>
 
 	<div id="weightNotification"
@@ -161,16 +177,21 @@
 
 		let selectedPackageEdges = null; 
 
+		const inBoundSnapMargin = 10
 		let stackCounter = 0
 		let canStack = true;
 		let canPlace = false
-		let isInsideWarehouseCheck = false
 		let pressStartTime; // To store the timestamp when the pointer is pressed
 		const LONG_PRESS_THRESHOLD = 500; // Threshold in milliseconds for a long press
 
 		const mousePositionInWorld = new THREE.Vector3(); // For storing the result
 
 		const targetY = 0; //I prefer using constants instead of numbers
+
+		const redColor = 0xFF0000
+		const greenColor = 0x00FF00
+		const whiteColor = 0xFFFFFF
+		const blackColor = 0x000000
 
 		let isInEditor = true
 
@@ -247,9 +268,15 @@
 				warehouseDimensions.length = parseFloat(document.getElementById("length").value);
 				warehouseDimensions.height = parseFloat(document.getElementById("height").value);
 				warehouseDimensions.weightLimit = parseFloat(document.getElementById("weight-limit").value);
+				document.getElementById("weightLimitLabel").innerHTML = "Weight: "+totalWeight+"/"+warehouseDimensions.weightLimit+" KG"
+				calculateTotalWeight();
+				if (totalWeight>warehouseDimensions.weightLimit){
+					showNotification("weightLimitNotification");
+				};
 				createWarehouseSurface();
-
 			});
+			document.getElementById("weightLimitLabel").style.color = "green"
+			document.getElementById("weightLimitLabel").innerHTML= "Weight: "+totalWeight+"/"+warehouseDimensions.weightLimit+" KG"
 
 			document.getElementById("rotateButton").addEventListener("click", rotateParcel);
 			document.getElementById("editButton").addEventListener("click", editPackage);
@@ -273,13 +300,25 @@
 		});
 
 		function calculateTotalWeight() {
-			return packages.reduce((total, packageData) => total + packageData.weight, 0);
+			totalWeight = packages.reduce((total, packageData) => total + packageData.weight, 0);
+			document.getElementById("weightLimitLabel").innerHTML= "Weight: "+totalWeight+"/"+warehouseDimensions.weightLimit+" KG"
+			if (totalWeight>warehouseDimensions.weightLimit){
+				document.getElementById("weightLimitLabel").style.color = "red"
+			}else if (totalWeight==warehouseDimensions.weightLimit){
+				document.getElementById("weightLimitLabel").style.color = "black"
+			}else{
+				document.getElementById("weightLimitLabel").style.color = "green"
+			}
+			return totalWeight;
 		}
 
 		function editPackage(index = null) {
 			isInEditor = false;
+			document.getElementById("modal-width").disabled = false;
+			document.getElementById("modal-length").disabled = false;
+			document.getElementById("modal-height").disabled = false;
+			document.getElementById("modal-stack").disabled = false;
 			if (index !== undefined && index !== null && index >= 0) {
-
 				const pkg = packages[index];
 				const mesh = objects[index];
 
@@ -288,6 +327,7 @@
 					isInEditor = true;
 					return;
 				}
+				let isMeshColliding = checkCollisions(mesh)
 
 				edittingPackage = mesh;
 
@@ -299,6 +339,21 @@
 				document.getElementById("modal-weight").value = pkg.weight || 100;
 				document.getElementById("modal-note").value = pkg.note || "";
 				document.getElementById("modal-stack").checked = pkg.canStack || false;
+				if (isMeshColliding){
+					document.getElementById("modal-width").disabled = true;
+					document.getElementById("modal-length").disabled = true;
+					document.getElementById("modal-height").disabled = true;
+				}else{
+					document.getElementById("modal-width").disabled = false;
+					document.getElementById("modal-length").disabled = false;
+					document.getElementById("modal-height").disabled = false;
+				}
+
+				if(mesh.userData.packageData.topPackage != null){
+					document.getElementById("modal-stack").disabled = true;
+				}else{
+					document.getElementById("modal-stack").disabled = false;
+				}
 
 				document.getElementById("modal").style.display = "flex";
 
@@ -313,6 +368,7 @@
 					isInEditor = true;
 					return;
 				}
+				let isMeshColliding = checkCollisions(edittingPackage)
 
 				document.getElementById("modal-name").value = packageData.name || "";
 				document.getElementById("modal-width").value = packageData.width;
@@ -322,6 +378,21 @@
 				document.getElementById("modal-weight").value = packageData.weight;
 				document.getElementById("modal-note").value = packageData.note || "";
 				document.getElementById("modal-stack").checked = packageData.canStack || false;
+				if (isMeshColliding){
+					document.getElementById("modal-width").disabled = true;
+					document.getElementById("modal-length").disabled = true;
+					document.getElementById("modal-height").disabled = true;
+				}else{
+					document.getElementById("modal-width").disabled = false;
+					document.getElementById("modal-length").disabled = false;
+					document.getElementById("modal-height").disabled = false;
+				}
+
+				if(packageData.topPackage != null){
+					document.getElementById("modal-stack").disabled = true;
+				}else{
+					document.getElementById("modal-stack").disabled = false;
+				}
 
 				document.getElementById("modal").style.display = "flex";
 
@@ -329,6 +400,7 @@
 			} else if(rightClickedObject){
 				edittingPackage = rightClickedObject
 				const packageData = edittingPackage.userData.packageData;
+				let isMeshColliding = checkCollisions(rightClickedObject)
 
 				if (!packageData) {
 					alert("Package data is missing.");
@@ -344,6 +416,21 @@
 				document.getElementById("modal-weight").value = packageData.weight;
 				document.getElementById("modal-note").value = packageData.note || "";
 				document.getElementById("modal-stack").checked = packageData.canStack || false;
+				if (isMeshColliding){
+					document.getElementById("modal-width").disabled = true;
+					document.getElementById("modal-length").disabled = true;
+					document.getElementById("modal-height").disabled = true;
+				}else{
+					document.getElementById("modal-width").disabled = false;
+					document.getElementById("modal-length").disabled = false;
+					document.getElementById("modal-height").disabled = false;
+				}
+
+				if(packageData.topPackage != null){
+					document.getElementById("modal-stack").disabled = true;
+				}else{
+					document.getElementById("modal-stack").disabled = false;
+				}
 
 				document.getElementById("modal").style.display = "flex";
 
@@ -378,13 +465,6 @@
 			const updatedNote = document.getElementById("modal-note").value;
 			const updatedCanStack = document.getElementById("modal-stack").checked;
 
-			const totalWeight = calculateTotalWeight() - packageData.weight + updatedWeight;
-
-			if (totalWeight > warehouseDimensions.weightLimit) {
-				alert("The total weight exceeds the warehouse weight limit!");
-				return;
-			}
-
 			packageData.name = updatedName;
 			packageData.width = updatedWidth;
 			packageData.length = updatedLength;
@@ -407,6 +487,11 @@
 
 			updateBoxList();
 
+			calculateTotalWeight();
+			if (totalWeight>warehouseDimensions.weightLimit){
+				showNotification("weightLimitNotification");
+			};
+
 			render();
 
 			clearEditPackageData();
@@ -421,12 +506,16 @@
 		}
 
 		function openModal() {
+			document.getElementById("modal-width").disabled = false;
+			document.getElementById("modal-length").disabled = false;
+			document.getElementById("modal-height").disabled = false;
+			document.getElementById("modal-stack").disabled = false;
 			document.getElementById("modal").style.display = "flex";
 			isEditing = false;
 			isInEditor = false;
 		}
 
-		let margin = 5;
+		const margin = 5;
 
 		let lastPosition = { x: -warehouseDimensions.width / 2 - margin, y: 45, z: -warehouseDimensions.length / 2 - margin };  // Starting point for placing packages
 
@@ -440,16 +529,13 @@
 			const weight = parseFloat(document.getElementById("modal-weight").value || 100);
 			const note = document.getElementById("modal-note").value;
 			const canStack = document.getElementById("modal-stack").checked;
-			const onTopPackage = null;
-			const onUnderPackage = null;
+			const topPackage = null;
+			const underPackage = null;
+			const leftPackage = null;
+			const rightPackage = null;
+			const frontPackage = null;
+			const backPackage = null;
 			const isRotated = false;
-
-			const totalWeight = calculateTotalWeight() + weight;
-
-			if (totalWeight > warehouseDimensions.weightLimit) {
-				alert("Weight limit exceeded! The package cannot be added.");
-				return;
-			}
 
 			const newPackage = {
 				name,
@@ -460,8 +546,12 @@
 				weight,
 				note,
 				canStack,
-				onTopPackage,
-				onUnderPackage,
+				topPackage,
+				underPackage,
+				leftPackage,
+				rightPackage,
+				frontPackage,
+				backPackage,
 				isRotated,
 				type: 'parcel',
 			};
@@ -510,6 +600,10 @@
 			lastPosition.x = position.x + width;
 
 			updateBoxList();
+			calculateTotalWeight();
+			if (totalWeight > warehouseDimensions.weightLimit){
+				showNotification("weightLimitNotification");
+			};
 			render();
 			closeModal();
 		}
@@ -539,28 +633,6 @@
 				originalCollision,
 				marginCollision,
 			};
-		}
-
-		function checkTopCollision(selectedPackage, otherPackage, horizontalTolerance = -12.5) {
-			const selectedBox = new THREE.Box3().setFromObject(selectedPackage);
-			const otherBox = new THREE.Box3().setFromObject(otherPackage);
-
-			const selectedTop = selectedBox.max.y;
-			const selectedBottom = selectedBox.min.y;
-			const otherTop = otherBox.max.y;
-			const otherBottom = otherBox.min.y;
-
-			const isNearTop = selectedTop > otherBottom && selectedBottom <= otherTop;
-
-			const isHorizontallyOverlapping = selectedBox.min.x < otherBox.max.x + horizontalTolerance &&
-				selectedBox.max.x > otherBox.min.x - horizontalTolerance &&
-				selectedBox.min.z < otherBox.max.z && selectedBox.max.z > otherBox.min.z;
-
-			if (isNearTop && isHorizontallyOverlapping) {
-				return true;
-			}
-
-			return false;
 		}
 
 		function createWarehouseSurface() {
@@ -595,7 +667,7 @@
 			const wireframeEdges = new THREE.EdgesGeometry(geometry);
 			const wireframe = new THREE.LineSegments(wireframeEdges, wireframeMaterial);
 
-			wireframe.position.set(0, warehouseDimensions.height / 2 + 5, 0); // Adjust the Y position, for example, move it slightly above
+			wireframe.position.set(0, warehouseDimensions.height / 2, 0); // Adjust the Y position, for example, move it slightly above
 
 			warehouseGroup = new THREE.Group();
 			warehouseGroup.add(blackPlane); // Add black plane beneath the grid
@@ -615,23 +687,6 @@
 		let lastValidPosition = new THREE.Vector3();
 
 		function getMousePosition(event) {
-			/**Previous Camera Position Code
-			pointer.set(
-				(event.clientX / window.innerWidth) * 2 - 1,
-				-(event.clientY / window.innerHeight) * 2 + 1
-			);
-			const ray = new THREE.Raycaster();
-			ray.setFromCamera(pointer, camera);
-			const intersects = ray.intersectObjects(objects, false);
-			if (intersects.length > 0) {
-				lastValidPosition.copy(intersects[0].point);
-				return intersects[0].point;
-			}
-			return lastValidPosition;
-			**/
-
-			//Here is a new camera position script that does not rely on intersections
-			
 			// Convert screen coordinates to normalized device coordinates (NDC)
 			pointer.set(
 				(event.clientX / window.innerWidth) * 2 - 1, // X: -1 to 1
@@ -654,104 +709,161 @@
 
 
 		function onPointerMove(event) {
-			pointer.set(
-				(event.clientX / window.innerWidth) * 2 - 1,
-				-(event.clientY / window.innerHeight) * 2 + 1
-			);
-			raycaster.setFromCamera(pointer, camera);
-			const intersects = raycaster.intersectObjects(objects, false);
-
+			setPointer()
 			if (stickToCursor && selectedPackage) {
 				if(!isInEditor){
 					stickToCursor = false
 					selectedPackage = false
 				}else{
-					const mousePos = getMousePosition(event);
-					if (mousePos) {
-						selectedPackage.position.x = mousePos.x;
-						selectedPackage.position.z = mousePos.z;
-					}
+					handlePackagePosition()
 				}
-				const isInsideWarehouse = isBoxInsideWarehouse(warehouseDimensions)
-
-				if (!isInsideWarehouse) {
-					isInsideWarehouseCheck = false
-					changeEdgeColor(0xFF0000)
+				if (!isBoxInsideWarehouse()) {
+					changeEdgeColor(redColor)
 					document.getElementById("warningMessage").style.display = "block";  // Show warning message
 				} else {
-					changeEdgeColor(0x00FF00)
-					isInsideWarehouseCheck = true
+					changeEdgeColor(greenColor)
 					document.getElementById("warningMessage").style.display = "none";  // Hide warning message
 				}
-				isColliding = true
-				let collisionCount = 0
-				for (const obj of objects) {
-					if (obj !== selectedPackage && obj.userData.type === 'parcel') {
-						const otherPackage = obj;
-						const collisions = checkCollision(selectedPackage, otherPackage)
-						const areColliding = collisions.originalCollision
-						const areMarginColliding = collisions.marginCollision
-						if (areColliding && obj.userData) {
-							collisionCount = collisionCount + 1
-							collidingObject = obj
-							if (!areMarginColliding){
-								if(stackCounter === 0){
-									console.log("outside margin")
-									changeEdgeColor(0x00FF00)
-									canStack = false;
-									canPlace = true;
-									selectedPackage.position.y = getPackageHeight(selectedPackage);
-								}
-							}else{
-								console.log("inside margin")
-								stackCounter = stackCounter + 1
-								const otherPackageTop = otherPackage.position.y + getPackageHeight(otherPackage);
-								selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage);
+				console.log("stack count is ",stackCounter)
+				if (handleMovementCollisions() == 0 ){
+					handleNoCollisionLogic()
+				}else{
+					isColliding = true
+					handleStackLogic()
+				}
+			}
+			render();
+		}
+
+		function setPointer(){
+			pointer.set(
+				(event.clientX / window.innerWidth) * 2 - 1,
+				-(event.clientY / window.innerHeight) * 2 + 1
+			);
+			raycaster.setFromCamera(pointer, camera);
+		}
+
+		function handlePackagePosition(){
+			const mousePos = getMousePosition(event);
+			if (mousePos) {
+				if (!adjustPackagePositionToWareHouseBounds(mousePos)){
+					selectedPackage.position.x = mousePos.x;
+					selectedPackage.position.z = mousePos.z;
+				}
+			}
+		}
+
+		function adjustPackagePositionToWareHouseBounds(mousePos){
+			const boxHalfWidth = getPackageWidth(selectedPackage) / 2;
+			const boxHalfLength = selectedPackage.geometry.parameters.depth / 2; // For length (z-axis)
+
+			const minX = mousePos.x - boxHalfWidth;
+			const maxX = mousePos.x + boxHalfWidth;
+			const minZ = mousePos.z - boxHalfLength;
+			const maxZ = mousePos.z + boxHalfLength;
+
+			const warehouseMinX = -warehouseDimensions.width / 2;
+			const warehouseMaxX = warehouseDimensions.width / 2;
+			const warehouseMinZ = -warehouseDimensions.length / 2;
+			const warehouseMaxZ = warehouseDimensions.length / 2;
+
+			const isCloseMinX = Math.abs(warehouseMinX-minX)
+			const isCloseMaxX = Math.abs(warehouseMaxX-maxX)
+			const isCloseMinZ = Math.abs(warehouseMinZ-minZ)
+			const isCloseMaxZ = Math.abs(warehouseMaxZ-maxZ)
+			let isInBound = false
+			if (isCloseMinX<inBoundSnapMargin){
+				if (isCloseMaxX<inBoundSnapMargin && isCloseMaxX<isCloseMinX){
+					selectedPackage.position.x = warehouseMaxX - boxHalfWidth
+					isInBound = true
+				}else{
+					selectedPackage.position.x = warehouseMinX + boxHalfWidth
+					isInBound = true
+				}
+			}else if(isCloseMaxX<inBoundSnapMargin){
+				selectedPackage.position.x = warehouseMaxX - boxHalfWidth
+				isInBound = true
+			}else{
+				selectedPackage.position.x = mousePos.x;
+			}
+			if (isCloseMinZ<inBoundSnapMargin){
+				if (isCloseMaxZ<inBoundSnapMargin && isCloseMaxZ<isCloseMinZ){
+					selectedPackage.position.z = warehouseMaxZ - boxHalfLength
+					isInBound = true
+				}else{
+					selectedPackage.position.z = warehouseMinZ + boxHalfLength
+					isInBound = true
+				}
+			}else if(isCloseMaxZ<inBoundSnapMargin){
+				selectedPackage.position.z = warehouseMaxZ - boxHalfLength
+				isInBound = true
+			}else{
+				selectedPackage.position.z = mousePos.z;
+			}
+
+			return isInBound;
+		}
+
+		function handleMovementCollisions(){
+			let collisionCount = 0
+			for (const obj of objects) {
+				if (obj !== selectedPackage && obj.userData.type === 'parcel') {
+					const otherPackage = obj;
+					const collisions = checkCollision(selectedPackage, otherPackage)
+					const areColliding = collisions.originalCollision
+					const areMarginColliding = collisions.marginCollision
+					if (areColliding && obj.userData) {
+						collisionCount = collisionCount + 1
+						collidingObject = obj
+						if (!areMarginColliding){
+							if(stackCounter === 0){
+								console.log("outside margin")
+								changeEdgeColor(greenColor)
+								canStack = false;
+								canPlace = true;
+								selectedPackage.position.y = getPackageHeight(selectedPackage);
 							}
+						}else{
+							console.log("inside margin")
+							stackCounter = stackCounter + 1
+							const otherPackageTop = otherPackage.position.y + getPackageHeight(otherPackage);
+							selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage);
 						}
 					}
 				}
-				console.log("stack count is ",stackCounter)
-				if (collisionCount == 0 ){
-					stackCounter = 0
-					console.log("collision count is 0")
-					isColliding = false
+			}
+			return collisionCount
+		}
+
+		function handleNoCollisionLogic(){
+			stackCounter = 0
+			console.log("collision count is 0")
+			isColliding = false
+			canPlace = true;
+			if (selectedPackage){
+				selectedPackage.position.y = getPackageHeight(selectedPackage)
+			}
+		}
+
+		function handleStackLogic(){
+			if(stackCounter !=0 && collidingObject){
+				if (collidingObject.userData.packageData.canStack) {
+					changeEdgeColor(greenColor)
+					canStack = true;
 					canPlace = true;
-					if (selectedPackage){
-						selectedPackage.position.y = getPackageHeight(selectedPackage)
-					}
-				}else if(collisionCount>1){
+					console.log("can stack")
+				}else {
+					changeEdgeColor(redColor);
+					canStack = false;
 					canPlace = false;
-					changeEdgeColor(0xFF0000);
-					const notification = document.getElementById('manyCollisionsNotification');
+					const notification = document.getElementById('notification');
 					notification.style.display = 'block';
 					setTimeout(() => {
 						notification.style.display = 'none';
 					}, 1000);
 					console.log("can not stack")
-				}else{
-					if(stackCounter !=0 && collidingObject){
-						if (collidingObject.userData.packageData.canStack) {
-							changeEdgeColor(0x00FF00)
-							canStack = true;
-							canPlace = true;
-							console.log("can stack")
-						}else {
-							changeEdgeColor(0xFF0000);
-							canStack = false;
-							canPlace = false;
-							const notification = document.getElementById('notification');
-							notification.style.display = 'block';
-							setTimeout(() => {
-								notification.style.display = 'none';
-							}, 1000);
-							console.log("can not stack")
-						}
-					}
 				}
 			}
-
-			render();
 		}
 
 		function getPackageHeight(mPackage){
@@ -778,36 +890,11 @@
 			}
 		}
 
-		function isBoxInsideWarehouse(warehouseDimensions) {
-			// Get the dimensions of the box (package)
-			const boxHalfWidth = selectedPackage.geometry.parameters.width / 2;
-			const boxHalfLength = selectedPackage.geometry.parameters.depth / 2; // For length (z-axis)
-
-			// Calculate the outer edges of the box
-			const minX = selectedPackage.position.x - boxHalfWidth;
-			const maxX = selectedPackage.position.x + boxHalfWidth;
-			const minZ = selectedPackage.position.z - boxHalfLength;
-			const maxZ = selectedPackage.position.z + boxHalfLength;
-
-			// Warehouse boundaries with margin
-			const warehouseMinX = -warehouseDimensions.width / 2;
-			const warehouseMaxX = warehouseDimensions.width / 2;
-			const warehouseMinZ = -warehouseDimensions.length / 2;
-			const warehouseMaxZ = warehouseDimensions.length / 2;
-
-			// Check if the box is entirely inside the warehouse
-			const isInside =
-				minX >= warehouseMinX &&
-				maxX <= warehouseMaxX &&
-				minZ >= warehouseMinZ &&
-				maxZ <= warehouseMaxZ;
-
-			return isInside;
-		}
-
+		/**
+		 * Click Listeners Start
+		 * **/
 		function onPointerDown(event){
 			if (event.button === 0) {
-				console.log("Left click pressed.");
 				if (contextMenuVisible) return;
 				pressStartTime = Date.now();
 			}
@@ -816,273 +903,19 @@
 		function onPointerUp(event) {
 			if (event.button === 0) {
 				console.log("Left click released.");
-				if(!isInEditor){
+				if(!isInEditor){//This disables any interraction if user is editting or adding a package
 					stickToCursor = false
 					selectedPackage = false
 					return;
 				}
-				/**MOVED FROM POINTER DOWN START**/
-
 				/**WE NEED TO MAKE SURE THAT CAMERA MOVEMENT AND 
 				 * DRAGGING AN OBJECT DO NOT HAPPEN IN THE SAME TIME
 				 * THE BEST WAY IS TO TRIGGER BOTH OF THEN IN POINTER UP**/
-
 				const pressDuration = Date.now() - pressStartTime;//This determines of the user clicked on an object
 				if(pressDuration<LONG_PRESS_THRESHOLD){
-					const mousePos = getMousePosition(event);
-
-					if (mousePos) {
-						if (stickToCursor){
-							dropObject()
-						}else{
-							pickObject(mousePos.x,mousePos.z,targetY)
-						}
-					}
-					return
-				}
-				/**MOVED FROM POINTER DOWN END**/
-				if (isDragging) {
-					isDragging = false;
-					cameraControls.enabled = true;
-					document.getElementById("warningMessage").style.display = "none";
-				}
-			}
-		}
-
-		function dropObject(){
-			/** Set off outlines here **/
-			if(isInsideWarehouseCheck && canPlace){
-				if(isColliding && collidingObject){
-					if (canStack) {
-						console.log("dropped object can stack")
-						/** which means the object is being stacked **/
-						if (getPackageWidth(selectedPackage) > getPackageWidth(collidingObject)){
-							const notification = document.getElementById('scaleNotification');
-							notification.style.display = 'block';  
-							setTimeout(() => {
-								notification.style.display = 'none';  // Hide after 2 seconds
-								isInEditor = true
-							}, 2000);
-							return;
-						}
-						if (selectedPackage.userData.length > collidingObject.userData.packageData.length){
-							const notification = document.getElementById('scaleNotification');
-							notification.style.display = 'block';  
-							setTimeout(() => {
-								notification.style.display = 'none';  // Hide after 2 seconds
-								isInEditor = true
-							}, 2000);
-							return;
-						}
-						if (selectedPackage.userData.packageData.weight > collidingObject.userData.packageData.weight){
-							const notification = document.getElementById('weightNotification');
-							notification.style.display = 'block';  
-							setTimeout(() => {
-								notification.style.display = 'none';  // Hide after 2 seconds
-								isInEditor = true
-							}, 2000);
-							return;
-						}
-						stickToCursor = false;
-						hideEdges()
-						stackObjectOnTop()
-						clearSelectedObjectData()
-						return;
-					}else {				
-						console.log("dropped object can not stack")		
-						stickToCursor = false;
-						hideEdges()
-						snapPackageToCollider()
-						clearSelectedObjectData()
-					}
-				}else{
-					if(isColliding){
-						console.log("dropped object but colliding")
-						const notification = document.getElementById('notification');
-						notification.style.display = 'block';  
-						setTimeout(() => {
-							notification.style.display = 'none';  // Hide after 2 seconds
-							isInEditor = true
-						}, 2000);
-						return;
-					}else{
-						console.log("dropped object not colliding")
-						hideEdges()
-						stickToCursor = false
-						clearSelectedObjectData()
-					}
-				}
-			}
-		}
-
-		function stackObjectOnTop(){
-			selectedPackage.userData.packageData.onUnderPackage = collidingObject
-			collidingObject.userData.packageData.onTopPackage = selectedPackage
-			const otherPackageTop = collidingObject.position.y + getPackageHeight(collidingObject);
-			selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage)
-			selectedPackage.position.z = collidingObject.position.z
-			selectedPackage.position.x = collidingObject.position.x
-		}
-
-		function snapPackageToCollider() {
-			if (selectedPackage && collidingObject) {
-				// Get bounding boxes of the selected package and the colliding object
-				const selectedBox = new THREE.Box3().setFromObject(selectedPackage);
-				const collidingBox = new THREE.Box3().setFromObject(collidingObject);
-
-				// Calculate the center of the selected package
-				const selectedCenter = new THREE.Vector3();
-				selectedBox.getCenter(selectedCenter);
-
-				// Calculate the center and size of the colliding object
-				const collidingCenter = new THREE.Vector3();
-				collidingBox.getCenter(collidingCenter);
-
-				const collidingSize = new THREE.Vector3();
-				collidingBox.getSize(collidingSize);
-
-				// Calculate face positions relative to the colliding object
-				const packageHeightCalculated = getPackageHeight(selectedPackage)
-				const faces = {
-					front: new THREE.Vector3(collidingCenter.x, packageHeightCalculated, collidingBox.max.z),
-					back: new THREE.Vector3(collidingCenter.x, packageHeightCalculated, collidingBox.min.z),
-					left: new THREE.Vector3(collidingBox.min.x, packageHeightCalculated, collidingCenter.z),
-					right: new THREE.Vector3(collidingBox.max.x, packageHeightCalculated, collidingCenter.z),
-				};
-
-				// Find the closest face
-				let closestFace = null;
-				let minDistance = Infinity;
-
-				for (const [face, position] of Object.entries(faces)) {
-					const distance = selectedCenter.distanceTo(position);
-					console.log(`Distance to ${face}:`, distance); // Debugging
-					if (distance < minDistance) {
-						minDistance = distance;
-						closestFace = face;
-					}
-				}
-
-				// Calculate the size of the selected package
-				const selectedSize = new THREE.Vector3();
-				selectedBox.getSize(selectedSize);
-
-				// Snap the selected package to the closest face
-				switch (closestFace) {
-					case 'front':
-						selectedPackage.position.set(
-							collidingCenter.x,
-							packageHeightCalculated,
-							collidingBox.max.z + selectedSize.z / 2
-						);
-						break;
-					case 'back':
-						selectedPackage.position.set(
-							collidingCenter.x,
-							packageHeightCalculated,
-							collidingBox.min.z - selectedSize.z / 2
-						);
-						break;
-					case 'left':
-						selectedPackage.position.set(
-							collidingBox.min.x - selectedSize.x / 2,
-							packageHeightCalculated,
-							collidingCenter.z
-						);
-						break;
-					case 'right':
-						selectedPackage.position.set(
-							collidingBox.max.x + selectedSize.x / 2,
-							packageHeightCalculated,
-							collidingCenter.z
-						);
-						break;
-				}
-
-				console.log(`Snapped to ${closestFace} face of the collider.`);
-			} else {
-				console.warn("No selected package or colliding object.");
-			}
-		}
-
-
-		function clearSelectedObjectData(){
-			isColliding = false;
-			collidingObject = null;
-			selectedPackage = null;
-		}
-
-		function pickObject(xPos,zPos,yPos){
-			if (isInEditor){
-				clearSelectedObjectData()
-				const intersects = raycaster.intersectObjects(objects, false);
-				if (intersects.length > 0 && intersects[0].object.userData.type === 'parcel') {
-					selectedPackage = intersects[0].object;
-					if(selectedPackage.userData.packageData.onTopPackage != null){
-						clearSelectedObjectData()
-						stickToCursor = false
-						const notification = document.getElementById('stackedNotification');
-						notification.style.display = 'block';  
-						setTimeout(() => {
-							notification.style.display = 'none';  // Hide after 2 seconds
-							isInEditor = true
-						}, 2000);
-					}else{
-						addEdgesToPackage()
-						const underPackage = selectedPackage.userData.packageData.onUnderPackage
-						if(underPackage != null){
-							underPackage.userData.packageData.onTopPackage = null
-						}
-						/** Set on outlines here **/
-						stickToCursor = true;
-						selectedPackage.position.x = xPos;
-						selectedPackage.position.z = zPos;
-						if (selectedPackage.userData.packageData.isRotated){
-							selectedPackage.position.y = selectedPackage.geometry.parameters.width/2
-						}else{
-							selectedPackage.position.y = selectedPackage.geometry.parameters.height/2
-						}
-					}
-				}
-			}
-		}
-
-		function addEdgesToPackage() {
-			if(selectedPackage){
-				if (!selectedPackage.geometry) {
-					console.error("The provided object does not have geometry.");
-					return;
-				}
-				// Create edges geometry from the selectedPackage's geometry
-				const edgesGeometry = new THREE.EdgesGeometry(selectedPackage.geometry);
-				// Create a material with white color
-				const edgesMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF });
-				// Create the edges as LineSegments
-				const edges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
-				// Add the edges to the scene
-				selectedPackage.add(edges);
-				// Return the edges for further manipulation if needed
-				return edges;
-			}
-		}
-
-		function hideEdges(){
-			if(selectedPackage){
-				for (let i = selectedPackage.children.length - 1; i >= 0; i--) {
-					const child = selectedPackage.children[i];
-					if (child instanceof THREE.LineSegments) {
-						selectedPackage.remove(child);
-					}
-				}
-			}
-		}
-
-		function changeEdgeColor(color) {
-			for (const child of selectedPackage.children) {
-				// Check if the child is a LineSegments (edges)
-				if (child instanceof THREE.LineSegments) {
-					// Change the color of the material
-					child.material.color.set(color);
+					packageClicked()
+				}else if (isDragging) {
+					stopDragging()
 				}
 			}
 		}
@@ -1125,6 +958,372 @@
 			}
 		}
 
+		/**
+		 * Click Listeners End
+		 * **/
+
+		function packageClicked(){
+			const mousePos = getMousePosition(event);
+			if (mousePos) {
+				if (stickToCursor){
+					dropObject()
+				}else{
+					pickObject(mousePos.x,mousePos.z,targetY)
+				}
+			}
+		}
+
+		function stopDragging(){
+			isDragging = false;
+			cameraControls.enabled = true;
+			document.getElementById("warningMessage").style.display = "none";
+		}
+
+		function dropObject(){
+			/** Set off outlines here **/
+			if(canPlace){
+				if(isColliding && collidingObject){
+					if (canStack) {
+						console.log("dropped object can stack")
+						/** which means the object is being stacked **/
+						if (checkPackageBiggerThanPackage(selectedPackage,collidingObject)){
+							showNotification('scaleNotification',2000);
+						}else if (checkPackageHeavierThanPackage(selectedPackage,collidingObject)){
+							showNotification('weightNotification',2000);
+						}else{
+							stackObjectOnTop();
+						}
+					}else {	
+						snapPackageToCollider();
+					}
+				}else{
+					if(isColliding){
+						showNotification('notification',2000);
+					}else{
+						freeDropObject()
+					}
+				}
+			}
+		}
+
+		function isBoxInsideWarehouse() {
+			if(!selectedPackage){
+				return false;
+			}
+			// Get the dimensions of the box (package)
+			const boxHalfWidth = getPackageWidth(selectedPackage) / 2;
+			const boxHalfLength = selectedPackage.geometry.parameters.depth / 2; // For length (z-axis)
+
+			// Calculate the outer edges of the box
+			const minX = selectedPackage.position.x - boxHalfWidth;
+			const maxX = selectedPackage.position.x + boxHalfWidth;
+			const minZ = selectedPackage.position.z - boxHalfLength;
+			const maxZ = selectedPackage.position.z + boxHalfLength;
+
+			// Warehouse boundaries with margin
+			const warehouseMinX = -warehouseDimensions.width / 2;
+			const warehouseMaxX = warehouseDimensions.width / 2;
+			const warehouseMinZ = -warehouseDimensions.length / 2;
+			const warehouseMaxZ = warehouseDimensions.length / 2;
+
+			// Check if the box is entirely inside the warehouse
+			const isInside =
+				minX >= warehouseMinX &&
+				maxX <= warehouseMaxX &&
+				minZ >= warehouseMinZ &&
+				maxZ <= warehouseMaxZ;
+
+			return isInside;
+		}
+
+		function checkPackageBiggerThanPackage(package1,package2){
+			if (!(package1 && package2)){
+				return false;
+			}else{
+				const widthComparison = getPackageWidth(package1) > getPackageWidth(package2)
+				const lengthComparison = package1.userData.packageData.length > package2.userData.packageData.length
+				return widthComparison || lengthComparison;
+			}
+		}
+
+		function checkPackageHeavierThanPackage(package1,package2){
+			if (package1 && package2){
+				return package1.userData.packageData.weight > package2.userData.packageData.weight;
+			}else{
+				return false;
+			}
+		}
+
+		function showNotification(notificationName, notificationDuration = 2000){
+			const notification = document.getElementById(notificationName);
+			notification.style.display = 'block';  
+			setTimeout(() => {
+				notification.style.display = 'none';
+				isInEditor = true
+			}, notificationDuration);
+		}
+
+		function freeDropObject(){
+			stickToCursor = false;
+			confirmDropObject();
+		}
+
+		function stackObjectOnTop(){
+			stickToCursor = false;
+			selectedPackage.userData.packageData.underPackage = collidingObject;
+			collidingObject.userData.packageData.topPackage = selectedPackage;
+			const otherPackageTop = collidingObject.position.y + getPackageHeight(collidingObject);
+			selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage);
+			selectedPackage.position.z = collidingObject.position.z;
+			selectedPackage.position.x = collidingObject.position.x;
+			confirmDropObject();
+		}
+
+		function snapPackageToCollider() {			
+			stickToCursor = false;
+			if (selectedPackage && collidingObject) {
+				// Get bounding boxes of the selected package and the colliding object
+				const selectedBox = new THREE.Box3().setFromObject(selectedPackage);
+				const collidingBox = new THREE.Box3().setFromObject(collidingObject);
+
+				// Calculate the center of the selected package
+				const selectedCenter = new THREE.Vector3();
+				selectedBox.getCenter(selectedCenter);
+
+				// Calculate the center and size of the colliding object
+				const collidingCenter = new THREE.Vector3();
+				collidingBox.getCenter(collidingCenter);
+
+				const collidingSize = new THREE.Vector3();
+				collidingBox.getSize(collidingSize);
+
+				// Calculate face positions relative to the colliding object
+				const packageHeightCalculated = getPackageHeight(selectedPackage)
+				const faces = getFaces(collidingCenter,packageHeightCalculated,collidingBox)
+
+				// Find the closest face
+				let closestFace = null;
+				let minDistance = Infinity;
+
+				for (const [face, position] of Object.entries(faces)) {
+					const distance = selectedCenter.distanceTo(position);
+					if (distance < minDistance) {
+						minDistance = distance;
+						closestFace = face;
+					}
+				}
+
+				// Calculate the size of the selected package
+				const selectedSize = new THREE.Vector3();
+				selectedBox.getSize(selectedSize);
+				snapToClosestFace(closestFace,packageHeightCalculated,collidingCenter,collidingBox,selectedSize)
+			}
+			confirmDropObject();
+		}
+
+		function getFaces(collidingCenter,packageHeightCalculated,collidingBox){
+			return {
+					front: new THREE.Vector3(collidingCenter.x, packageHeightCalculated, collidingBox.max.z),
+					back: new THREE.Vector3(collidingCenter.x, packageHeightCalculated, collidingBox.min.z),
+					left: new THREE.Vector3(collidingBox.min.x, packageHeightCalculated, collidingCenter.z),
+					right: new THREE.Vector3(collidingBox.max.x, packageHeightCalculated, collidingCenter.z),
+				};
+		}
+
+		function snapToClosestFace(closestFace,packageHeight,collidingCenter,collidingBox,selectedSize){
+			switch (closestFace) {
+				case 'front':
+					selectedPackage.position.set(
+						collidingCenter.x,
+						packageHeight,
+						collidingBox.max.z + selectedSize.z / 2
+					);
+					break;
+				case 'back':
+					selectedPackage.position.set(
+						collidingCenter.x,
+						packageHeight,
+						collidingBox.min.z - selectedSize.z / 2
+					);
+					break;
+				case 'left':
+					selectedPackage.position.set(
+						collidingBox.min.x - selectedSize.x / 2,
+						packageHeight,
+						collidingCenter.z
+					);
+					break;
+				case 'right':
+					selectedPackage.position.set(
+						collidingBox.max.x + selectedSize.x / 2,
+						packageHeight,
+						collidingCenter.z
+					);
+					break;
+			}
+		}
+
+		function confirmDropObject(){
+			if(confirmSafePlace()){
+				if(isBoxInsideWarehouse()){
+					document.getElementById("warningMessage").style.display = "none";  // Hide warning message
+					hideEdges();
+				}else{
+					changeEdgeColor(redColor);
+				}
+				clearSelectedObjectData();
+			}else{
+				stickToCursor = true
+				showNotification('notificationInvalidPlace',2000)
+			}
+		}
+
+		function confirmSafePlace(){
+			if(selectedPackage){
+				const selectedPackageOriginalCollision = new THREE.Box3().setFromObject(selectedPackage);
+				const selectedPackageCollision =  new THREE.Box3(
+					selectedPackageOriginalCollision.min.clone().addScalar(1),
+					selectedPackageOriginalCollision.max.clone().addScalar(-1)
+				);
+				let existingCollisions = 0
+				for(const obj of objects){
+					const objCollision = new THREE.Box3().setFromObject(obj);
+					if(selectedPackageCollision.intersectsBox(objCollision)){
+						if (existingCollisions == 0){
+							existingCollisions = 1
+						}else{
+							return false
+						}
+					}
+				}
+				return true;
+			}else{
+				return true;
+			}
+		}
+
+		function checkCollisions(pkg){
+			if(pkg){
+				const selectedPackageOriginalCollision = new THREE.Box3().setFromObject(pkg);
+				const selectedPackageCollision =  new THREE.Box3(
+					selectedPackageOriginalCollision.min.clone().addScalar(-1),
+					selectedPackageOriginalCollision.max.clone().addScalar(1)
+				);
+				let existingCollisions = 0
+				for(const obj of objects){
+					const objOriginalCollision = new THREE.Box3().setFromObject(obj);
+					const objCollision =  new THREE.Box3(
+						objOriginalCollision.min.clone().addScalar(-1),
+						objOriginalCollision.max.clone().addScalar(1)
+					);
+					if(selectedPackageCollision.intersectsBox(objCollision)){
+						if (existingCollisions == 0){
+							existingCollisions = 1
+						}else{
+							return true
+						}
+					}
+				}
+				return false;
+			}else{
+				return false;
+			}
+		}
+
+		function clearSelectedObjectData(){
+			isColliding = false;
+			collidingObject = null;
+			selectedPackage = null;
+		}
+
+		function pickObject(xPos,zPos,yPos){
+			if (isInEditor){
+				clearSelectedObjectData()
+				const intersects = raycaster.intersectObjects(objects, false);
+				if (intersects.length > 0 && intersects[0].object.userData.type === 'parcel') {
+					selectedPackage = intersects[0].object;
+					if(selectedPackage.userData.packageData.topPackage != null){
+						clearSelectedObjectData()
+						stickToCursor = false
+						const notification = document.getElementById('stackedNotification');
+						notification.style.display = 'block';  
+						setTimeout(() => {
+							notification.style.display = 'none';  // Hide after 2 seconds
+							isInEditor = true
+						}, 2000);
+					}else{
+						addEdgesToPackage()
+						clearStickyRefs()
+						/** Set on outlines here **/
+						stickToCursor = true;
+						selectedPackage.position.x = xPos;
+						selectedPackage.position.z = zPos;
+						if (selectedPackage.userData.packageData.isRotated){
+							selectedPackage.position.y = selectedPackage.geometry.parameters.width/2
+						}else{
+							selectedPackage.position.y = selectedPackage.geometry.parameters.height/2
+						}
+					}
+				}
+			}
+		}
+
+		function clearStickyRefs(){
+			const underPackage = selectedPackage.userData.packageData.underPackage
+			if(underPackage != null){
+				selectedPackage.userData.packageData.underPackage = null
+				underPackage.userData.packageData.topPackage = null
+			}
+		}
+
+		function addEdgesToPackage() {
+			if(selectedPackage){
+				if (!selectedPackage.geometry) {
+					console.error("The provided object does not have geometry.");
+					return;
+				}
+				for (let i = selectedPackage.children.length - 1; i >= 0; i--) {
+					const child = selectedPackage.children[i];
+					if (child instanceof THREE.LineSegments) {
+						return;
+					}
+				}
+				// Create edges geometry from the selectedPackage's geometry
+				const edgesGeometry = new THREE.EdgesGeometry(selectedPackage.geometry);
+				// Create a material with white color
+				const edgesMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF });
+				// Create the edges as LineSegments
+				const edges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+				// Add the edges to the scene
+				selectedPackage.add(edges);
+				// Return the edges for further manipulation if needed
+				return edges;
+			}
+		}
+
+		function hideEdges(){
+			if(selectedPackage){
+				for (let i = selectedPackage.children.length - 1; i >= 0; i--) {
+					const child = selectedPackage.children[i];
+					if (child instanceof THREE.LineSegments) {
+						selectedPackage.remove(child);
+					}
+				}
+			}
+		}
+
+		function changeEdgeColor(color) {
+			if(selectedPackage){
+				for (const child of selectedPackage.children) {
+					// Check if the child is a LineSegments (edges)
+					if (child instanceof THREE.LineSegments) {
+						// Change the color of the material
+						child.material.color.set(color);
+					}
+				}
+			}
+		}
+
 		function EditObject(){
 			if (isInEditor){
 				const intersects = raycaster.intersectObjects(objects, false);
@@ -1150,28 +1349,36 @@
 
 		function rotateParcel() {
 			if(rightClickedObject){
-				if (rightClickedObject.userData.packageData.isRotated){
-					rightClickedObject.userData.packageData.isRotated = false
-					rightClickedObject.position.y = rightClickedObject.geometry.parameters.height/2
-					rightClickedObject.rotation.x = 0;
+				if (checkCollisions(rightClickedObject)){
+					showNotification("collidingObjectNotification")
 				}else{
-					rightClickedObject.userData.packageData.isRotated = true
-					rightClickedObject.position.y = rightClickedObject.geometry.parameters.width/2
-					rightClickedObject.rotation.x = Math.PI / 2;
+					if (rightClickedObject.userData.packageData.isRotated){
+						rightClickedObject.userData.packageData.isRotated = false
+						rightClickedObject.position.y = rightClickedObject.geometry.parameters.height/2
+						rightClickedObject.rotation.x = 0;
+					}else{
+						rightClickedObject.userData.packageData.isRotated = true
+						rightClickedObject.position.y = rightClickedObject.geometry.parameters.width/2
+						rightClickedObject.rotation.x = Math.PI / 2;
+					}
+					render();
 				}
-				render();
 			}
 			else if (selectedPackage) {
-				if (selectedPackage.userData.packageData.isRotated){
-					selectedPackage.userData.packageData.isRotated = false
-					selectedPackage.position.y = rightClickedObject.geometry.parameters.height/2
-					selectedPackage.rotation.x = 0;
+				if (checkCollisions(selectedPackage)){
+					showNotification("collidingObjectNotification")
 				}else{
-					selectedPackage.userData.packageData.isRotated = true
-					selectedPackage.position.y = rightClickedObject.geometry.parameters.width/2
-					selectedPackage.rotation.x = Math.PI / 2;
+					if (selectedPackage.userData.packageData.isRotated){
+						selectedPackage.userData.packageData.isRotated = false
+						selectedPackage.position.y = rightClickedObject.geometry.parameters.height/2
+						selectedPackage.rotation.x = 0;
+					}else{
+						selectedPackage.userData.packageData.isRotated = true
+						selectedPackage.position.y = rightClickedObject.geometry.parameters.width/2
+						selectedPackage.rotation.x = Math.PI / 2;
+					}
+					render();
 				}
-				render();
 			}
 		}
 
@@ -1188,6 +1395,10 @@
 
 		function deleteParcel() {
 			if(rightClickedObject.userData.type === 'parcel'){
+				if (rightClickedObject.userData.packageData.topPackage != null){
+					showNotification("collidingObjectNotification")
+					return ;
+				}
 				const index = objects.indexOf(rightClickedObject);
 				if (index !== -1) {
 					deleteParcelByIndex(index);
@@ -1195,6 +1406,10 @@
 				}
 			}
 			else if (selectedPackage.userData.type === 'parcel') {
+				if (selectedPackage.userData.packageData.topPackage != null){
+					showNotification("collidingObjectNotification")
+					return ;
+				}
 				const index = objects.indexOf(selectedPackage);
 				if (index !== -1) {
 					deleteParcelByIndex(index);
@@ -1214,30 +1429,35 @@
 					const li = document.createElement("li");
 
 					li.innerHTML = `
-                <div class="package-header">
-                    <strong>${packageData.name}</strong>
-                    <div class="action-icons">
-                        <button class="edit-btn" data-index="${index}">Edit</button>
-                        <button class="copy-btn" data-index="${index}">Copy</button>
-                        <button class="delete-btn" data-index="${index}">Delete</button>
-                    </div>
-                </div>
-                <div class="package-details">
-                    <div class="detail-row">
-                        <p><strong>Width:</strong> ${packageData.width}</p>
-                        <p><strong>Height:</strong> ${packageData.height}</p>
-                    </div>
-                    <div class="detail-row">
-                        <p><strong>Length:</strong> ${packageData.length}</p>
-                        <p><strong>Weight:</strong> ${packageData.weight}kg</p>
+				<div class="package-header">
+					<strong>${packageData.name}</strong>
+					<div class="action-icons">
+						<button class="edit-btn" data-index="${index}">Edit</button>
+						<button class="copy-btn" data-index="${index}">Copy</button>
+						<button class="delete-btn" data-index="${index}">Delete</button>
+					</div>
+				</div>
+				<div class="package-details">
+					<div class="detail-row">
+						<p><strong>Width:</strong> ${packageData.width}</p>
+						<p><strong>Height:</strong> ${packageData.height}</p>
+					</div>
+					<div class="detail-row">
+						<p><strong>Length:</strong> ${packageData.length}</p>
+						<p><strong>Weight:</strong> ${packageData.weight}kg</p>
 						<p><strong>Color:</strong> ${packageData.color}</p>
 
-                    </div>
-                    <div class="detail-row">
-                        <p><strong>Note:</strong> ${packageData.note}</p>
-                        <p><strong>Can Stack:</strong> ${packageData.canStack ? 'Yes' : 'No'}</p>
-                    </div>
-            `;
+					</div>
+					<div class="detail-row">
+						<p><strong>Note:</strong> ${packageData.note}</p>
+						<p><strong>Can Stack:</strong> ${packageData.canStack ? 'Yes' : 'No'}</p>
+					</div>
+					<!-- Placeholder for cursor position that will be replaced -->
+				<div class="cursor-position">
+					<p><strong>Cursor Position:</strong> <span id="cursor-coordinates">X: 0, Y: 0</span></p>
+				</div>
+							</div>
+						`;
 
 					boxList.appendChild(li);
 				}
@@ -1274,17 +1494,14 @@
 				console.error('Package data missing.');
 				return; // Exit if no valid package data
 			}
-			packageData.onUnderPackage = null
-			packageData.onTopPackage = null
+			packageData.underPackage = null
+			packageData.topPackage = null
+			packageData.leftPackage = null
+			packageData.rightPackage = null
+			packageData.frontPackage = null
+			packageData.backPackage = null
 
 			const clonePackage = { ...packageData };
-
-			const totalWeight = calculateTotalWeight() + clonePackage.weight;
-
-			if (totalWeight > warehouseDimensions.weightLimit) {
-				alert("The total weight exceeds the warehouse weight limit!");
-				return; // Exit the function if weight limit is exceeded
-			}
 
 			const packageMesh = new THREE.Mesh(
 				new THREE.BoxGeometry(clonePackage.width, clonePackage.height, clonePackage.length),
@@ -1306,15 +1523,15 @@
 			packages.push(clonePackage);
 
 			updateBoxList();
+			calculateTotalWeight();
+			if (totalWeight>warehouseDimensions.weightLimit){
+				showNotification("weightLimitNotification");
+			};
 			render();
 		}
 
 		function deleteParcelByIndex(index) {
 			const packageMesh = objects[index];
-
-			const packageWeight = packageMesh.userData.packageData.weight;
-
-			const totalWeight = calculateTotalWeight() - packageWeight;
 
 			scene.remove(packageMesh);
 
@@ -1325,6 +1542,8 @@
 			packages.splice(index, 1);
 
 			updateBoxList();
+
+			calculateTotalWeight();
 			render();
 		}
 
