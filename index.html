@@ -28,6 +28,27 @@
 		<br />
 		<label  id="weightLimitLabel">Weight</label>
 		<br />
+		<h4>Options</h4>
+		<label>
+			<input type="checkbox" id="snapToEdges" checked/> Snap to Warehouse Edges
+		</label>
+		<br />
+		<label>
+			<input type="checkbox" id="snapToObjects" checked/> Snap to Other Objects
+		</label>
+		<br />
+		<label>
+			<input type="checkbox" id="autoStack" checked/> Auto Stack on Top
+		</label>
+		<br />
+		<h5>Rotation Direction</h5>
+		<label>
+			<input type="radio" name="rotation" id="rotateHorizontal" checked /> Horizontally
+		</label>
+		<br />
+		<label>
+			<input type="radio" name="rotation" id="rotateVertical" /> Vertically
+		</label>
 		<h4>Boxes</h4>
 		<div id="boxList">
 			<ul id="boxListItems"></ul>
@@ -91,7 +112,6 @@
 				<button id="savePackageButton">Submit Package</button>
 			</div>
 		</div>
-	</div> Limit Exceeded.
 	</div>
 	<div id="weightLimitNotification"
 		style="display:none; background-color: #f44336; color: white; padding: 15px; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;">
@@ -182,6 +202,15 @@
 		let stackCounter = 0
 		let pressStartTime; // To store the timestamp when the pointer is pressed
 		const LONG_PRESS_THRESHOLD = 500; // Threshold in milliseconds for a long press
+		const rotationDirections = {
+			Horizental: "H",
+			Vertical: "V",
+		}
+		let snapToWareHouseEdges = true;
+		let snapToOtherObjects = true;
+		let autoStackOnTop = true;
+		let rotationDirection = rotationDirections.Horizental;
+
 
 		const mousePositionInWorld = new THREE.Vector3(); // For storing the result
 
@@ -260,10 +289,49 @@
 			document.addEventListener("keydown", onDocumentKeyDown);
 			document.addEventListener("keyup", onDocumentKeyUp);
 			window.addEventListener("resize", onWindowResize);
+			snapToWareHouseEdges = document.getElementById("snapToEdges").checked;
+			snapToOtherObjects = document.getElementById("snapToObjects").checked;
+			autoStackOnTop = document.getElementById("autoStack").checked;
+			if (document.getElementById("rotateHorizontal").checked){
+				rotationDirection = rotationDirections.Horizental
+			}else if (document.getElementById("rotateVertical").checked){
+				rotationDirection = rotationDirections.Vertical
+			}
 
 			document.addEventListener("contextmenu", onRightClick);
 			document.addEventListener("click", onLeftClick);
-
+			document.getElementById("snapToEdges").addEventListener("change", (event) => {
+				if (event.target.checked){
+					snapToWareHouseEdges = true;
+				}else{
+					snapToWareHouseEdges = false;
+				};
+			});
+			document.getElementById("snapToObjects").addEventListener("change", (event) => {
+				if (event.target.checked){
+					snapToOtherObjects = true;
+				}else{
+					snapToOtherObjects = false;
+				};
+			});
+			document.getElementById("autoStack").addEventListener("change", (event) => {
+				if (event.target.checked){
+					autoStackOnTop = true;
+				}else{
+					autoStackOnTop = false;
+				};
+			});
+			document.getElementsByName("rotation").forEach((radio) => {
+				radio.addEventListener("change", (event) => {
+					if (event.target.checked) {
+						if (event.target.id == "rotateHorizontal"){
+							rotationDirection = rotationDirections.Horizental
+						}else if (event.target.id == "rotateVertical"){
+							rotationDirection = rotationDirections.Vertical
+						}
+					}
+				});
+			});
 			document.getElementById("apply").addEventListener("click", function () {
 				warehouseDimensions.width = parseFloat(document.getElementById("width").value);
 				warehouseDimensions.length = parseFloat(document.getElementById("length").value);
@@ -818,14 +886,22 @@
 						if (areMarginColliding){
 							stackCounter += 1;
 							const otherPackageTop = collidingObject.position.y + getPackageHeight(collidingObject)/2;
-							selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage)/2;
+							if (autoStackOnTop){
+								selectedPackage.position.y = otherPackageTop + getPackageHeight(selectedPackage)/2;
+							}else{
+								selectedPackage.position.y = getPackageHeight(selectedPackage)/2;
+							}
 						}else{
 							if(stackCounter === 0){
 								changeEdgeColor(greenColor)
 								selectedPackage.position.y = getPackageHeight(selectedPackage)/2;
 							};
 						}
-						isSticky = stickPackageToCollider(mousePos)
+						if (snapToOtherObjects){
+							isSticky = stickPackageToCollider(mousePos)
+						}else{
+							isSticky = false
+						}
 					};
 				};
 			};
@@ -898,6 +974,9 @@
 
 
 		function adjustPackagePositionToWareHouseBounds(mousePos){
+			if (!snapToWareHouseEdges){
+				return false;
+			}
 			const boxHalfWidth = getPackageWidth(selectedPackage) / 2;
 			const boxHalfLength = selectedPackage.geometry.parameters.depth / 2; // For length (z-axis)
 
@@ -1423,19 +1502,11 @@
 				if (checkCollisions(target)) {
 					showNotification("collidingObjectNotification");
 				} else {
-					const prevWidth = target.geometry.parameters.width;
-					const prevHeight = target.geometry.parameters.height;
-					const prevLength = target.geometry.parameters.depth;
-					const yPosDiff = prevHeight-prevWidth
-
-					// Toggle rotation state
-					target.userData.packageData.isRotated = !target.userData.packageData.isRotated;
-
-					// Swap width and height (ensure correct assignment)
-					target.geometry = new THREE.BoxGeometry(prevHeight, prevWidth, prevLength);
-					target.position.y -= yPosDiff/2
-					// Render updates
-					render();
+					if (rotationDirection == rotationDirections.Horizental){
+						rotateHorizentally(target);
+					}else{
+						rotateVertically(target);
+					};
 				}
 			}
 
@@ -1444,6 +1515,33 @@
 			} else if (selectedPackage) {
 				toggleRotation(selectedPackage);
 			}
+		}
+
+		function rotateVertically(target){
+			const prevWidth = target.geometry.parameters.width;
+			const prevHeight = target.geometry.parameters.height;
+			const prevLength = target.geometry.parameters.depth;
+
+			const yPosDiff = prevHeight - prevLength;
+
+			target.geometry = new THREE.BoxGeometry(prevWidth, prevLength, prevHeight);
+
+			target.position.y -= yPosDiff / 2;
+
+			render();
+		}
+
+		function rotateHorizentally(target){
+			const prevWidth = target.geometry.parameters.width;
+			const prevHeight = target.geometry.parameters.height;
+			const prevLength = target.geometry.parameters.depth;
+
+			const yPosDiff = prevHeight-prevWidth
+
+			target.geometry = new THREE.BoxGeometry(prevHeight, prevWidth, prevLength);
+			target.position.y -= yPosDiff/2
+
+			render();
 		}
 
 		function copyParcel() {
@@ -1505,9 +1603,9 @@
 					<div class="detail-row">
 						<p><strong>Width:</strong> ${packageData.width}</p>
 						<p><strong>Height:</strong> ${packageData.height}</p>
+						<p><strong>Length:</strong> ${packageData.length}</p>	
 					</div>
 					<div class="detail-row">
-						<p><strong>Length:</strong> ${packageData.length}</p>
 						<p><strong>Weight:</strong> ${packageData.weight}kg</p>
 						<p><strong>Color:</strong> ${packageData.color}</p>
 
@@ -1516,11 +1614,7 @@
 						<p><strong>Note:</strong> ${packageData.note}</p>
 						<p><strong>Can Stack:</strong> ${packageData.canStack ? 'Yes' : 'No'}</p>
 					</div>
-					<!-- Placeholder for cursor position that will be replaced -->
-				<div class="cursor-position">
-					<p><strong>Cursor Position:</strong> <span id="cursor-coordinates">X: 0, Y: 0</span></p>
 				</div>
-							</div>
 						`;
 
 					boxList.appendChild(li);
